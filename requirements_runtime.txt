@@ -12,3 +12,4 @@ pyinstaller
 PySide6
 pyarrow
 packaging
+tzdata
