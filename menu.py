@@ -74,7 +74,7 @@ CONFIG_PATH = get_asset("config.json")
 _REL_PATHS = {
     "RAW_FILES"                 :"SCRIPT/00_RAW_FILE",
     # BUSINESS
-    "FORMATTA_FCST"             : "SCRIPT/BUSINESS/13_ESTRAI_FILE_GARA/ESTRAI_FILE_GARA.py",
+    "ESTRAI_FILE_GARA"             : "SCRIPT/BUSINESS/13_ESTRAI_FILE_GARA/ESTRAI_FILE_GARA.py",
     "FCST"                      : "SCRIPT/BUSINESS/12_FCST_BUSINESS/crea_report_aggregato.py",
     "APPUNTAMENTI_SETTIMANA"    : "SCRIPT/BUSINESS/02_APPUNTAMENTI_SETTIMANA/script/ESTRAI_APPUNTMANETI_SETTIMANA.py",
         #altri script
@@ -88,17 +88,14 @@ _REL_PATHS = {
     "PRESA_IN_CARICO"           : "SCRIPT/BUSINESS/CAMPAGNE/02_CONTROLLA_PRESA_IN_CARICO/PRESA_IN_CARICO.py",
     "REPORT_CAMPAGNE"           : "",
     # CONSUMER
-    "FORMATTA_FILES"            : "SCRIPT/CONSUMER/00_FORMATTA_FILE/script/FORMATTA_FILES_NEGOZI.py",
+    
     "REPORT_PEDONALITA"         : "SCRIPT/CONSUMER/02_REPORT_PEDONALITA/script/CREA_REPORT_PEDONALITA.py",
-    "REPORT_MAGAZZINO"          : "SCRIPT/CONSUMER/04_REPORT_MAGAZZINO/script/CREA_REPORT_MAGAZZINO.py",
-    "REPORT_TRATTATIVE"         : "SCRIPT/CONSUMER/08_REPORT_TRATT_ENERGIA/REPORT_TRATTATIVE.py",
+    "CRUSCOTTO_TRACCIAMENTO"     : "SCRIPT/CONSUMER/11_CRUSCOTTO_AGGREGATIVO/CRUSCOTTO_AGGREGATIVO.py",
+    "CRUSCOTTO_GIORNALIERO"     : "SCRIPT/CONSUMER/12_CRUSCOTTO_PISTA_CONSUMER/main.py",
+    
         #altri script
     "FORMATTA_PEDONALITA"       : "SCRIPT/CONSUMER/01_FORMATTA_PEDONALITA/script/FORMATTA_PEDONALITA.py",
     "FORMATTA_MAGAZZINO"        : "SCRIPT/CONSUMER/03_FORMATTA_MAGAZZINO/FORMATTA_MAGAZZINO.py",
-    "TRACCIAMENTO_ATTIVAZIONI"  : "SCRIPT/CONSUMER/05_AGGREGA_CONTRATTI_ATTIVATI/AGGREGA_FILE.py",
-    "GARA_PISTA_BUSINESS"       : "SCRIPT/CONSUMER/06_RACCOGLI_DATI_GARA_BIZ/SCRIPT/AGGREGA_GARA.py",
-    "TRACCIAMENTO_PISTA_BIZ"    : "SCRIPT/CONSUMER/07_AGGREGA_TRACCIAMENTO_BIZ/AGGREGA_BIZ.py"
-    
 
 }
 
@@ -505,9 +502,7 @@ def lancia_script(nome_script, terminale: TerminaleWidget, on_finished=None):
 
         try:
             process = subprocess.Popen(
-                [python_exe, "-u", "-c",
-                 f"import sys; sys.path.insert(0, r'{script_path.parent}'); "
-                 f"exec(open(r'{script_path}', encoding='utf-8').read())"],
+                [python_exe, "-u", str(script_path)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace",
@@ -1026,16 +1021,15 @@ class Sidebar(QFrame):
 
         home_sottovoci        = [] if pagina_attiva == "main" else None
         giornalieri_sottovoci = [
-            ("Business",          ["Formatta file gara", "FCST", "Appuntamenti"]),
-            ("Consumer / Negozi", ["Formatta file negozi", "Report magazzino", "Report pedonalità"]),
+            ("Business",          ["Estrai file gara", "FCST", "Appuntamenti"]),
+            ("Consumer / Negozi", ["Report pedonalità", "Cruscotto Tracciamento", "Cruscotto Giornaliero"]),
         ] if pagina_attiva == "giornalieri" else None
         campagne_sottovoci    = [
-            ("Campagne", ["Dividi file campagne", "Aggrega file campagne", "Presa in carico cliente", "?(⚒️)"]),
+            ("Campagne", ["Divisione per aente", "Riaggrega file Campagne", "Presa in carico cliente", "Report Campagne(⚒️)"]),
         ] if pagina_attiva == "campagne" else None
         altro_sottovoci       = [
             ("Business", ["Formatta file Gara", "Formatta file appuntamenti", "Formatta file opportunità", "Chiusura gara"]),
-            ("Formattazione file negozi", ["Formatta pedonalità", "Formatta magazzino", "Formatta performance(⚒️)"]),
-            ("Tracciamento file negozi", ["Aggrega attivazioni contratti", "Aggrega tracciamento pista business", "Aggrega premio pista business"])
+            ("Formattazione file negozi", ["Formatta pedonalità", "Formatta magazzino", "Formatta performance(⚒️)"])
         ] if pagina_attiva == "altri script" else None
 
         nav_items = [
@@ -1257,7 +1251,7 @@ class PaginaGiornalieri(QWidget):
         cards_business = [
             {"icona": "🗂️", "titolo": "1. Estrai file gara",
              "desc":  "Estrae da API, formatta e carica in un colpo solo gara, opportunità e appuntamenti.",
-             "script": paths["FORMATTA_FCST"]},
+             "script": paths["ESTRAI_FILE_GARA"]},
             {"icona": "📈", "titolo": "2. FCST",
              "desc": "Generazione forecast giornaliero con reportistica automatica",
              "script": paths["FCST"]},
@@ -1276,19 +1270,15 @@ class PaginaGiornalieri(QWidget):
         row += 1
         grid.addWidget(crea_section_label("Consumer / Negozi"), row, 0, 1, 12); row += 1
         cards_consumer = [
-            {"icona": "🗂️", "titolo": "1. Formatta file negozi",
-             "desc": "Formatta e prepara i file dei negozi",
-             "script": paths["FORMATTA_FILES"], "cartella": paths["RAW_FILES"],
-             "nomi_file": ["*Export_pedonalita*.xlsx", "*valorizzazione_magazzino*.csv"]},
-            {"icona": "🏬", "titolo": "2. Report magazzino",
-             "desc": "Report sullo stato attuale dei magazzini dei negozi.",
-             "script": paths["REPORT_MAGAZZINO"]},
-            {"icona": "📊", "titolo": "3. Report pedonalità",
+            {"icona": "📊", "titolo": "1. Report Pedonalità",
              "desc": "Creazione report per analisi flussi di pedonalità nei punti vendita.",
              "script": paths["REPORT_PEDONALITA"]},
-            {"icona": "⚡", "titolo": "4. Report Trattative energia",
-             "desc": "Creazione REPORT_TRACCIAMENTO_TRATTATIVE_ENERGIA\nIntreccia dati di pedonalità e trattative per scoprire quale è il RATIO per punto vendita",
-             "script": paths["REPORT_TRATTATIVE"]},
+            {"icona": "📊", "titolo": "2. Cruscotto Tracciamento",
+             "desc": "Report aggregato per Giorgio che riunisce Business, trattative Energia e vendite Gadget con eventuale cross selling, per monitorare l'esercizio dei negozi.",
+             "script": paths["CRUSCOTTO_TRACCIAMENTO"]},
+            {"icona": "📊", "titolo": "3. Cruscotto Giornaliero", 
+             "desc": "Report aggregato per Giorgio e i referenti Fastweb+Vodafone che riunisce le 5 piste consumer: Mobile, Wireline, Upselling, Energy,",
+             "script": paths["CRUSCOTTO_GIORNALIERO"]},
         ]
         grid.setRowMinimumHeight(row, CARD_HEIGHT + 16)
         for i, cfg in enumerate(cards_consumer):
@@ -1297,7 +1287,7 @@ class PaginaGiornalieri(QWidget):
             wrapper = QWidget(); wrapper.setStyleSheet("background:transparent;")
             w_lay = QVBoxLayout(wrapper); w_lay.setContentsMargins(0 if i == 0 else 8, 0, 0 if i == len(cards_consumer)-1 else 8, 0); w_lay.setSpacing(0)
             w_lay.addWidget(card, alignment=Qt.AlignTop)
-            grid.addWidget(wrapper, row, i * 3, 1, 3)
+            grid.addWidget(wrapper, row, i * 4, 1, 4)
         row += 1
         grid.setRowStretch(row, 1)
         self.scroll.setWidget(inner)
@@ -1405,27 +1395,6 @@ class PaginaAltriScript(QWidget):
             card = ScriptCard(icona, titolo, desc, script, terminale, cartella=cartella, nome_file=nome_file)
             wrapper = QWidget(); wrapper.setStyleSheet("background:transparent;")
             w_lay = QVBoxLayout(wrapper); w_lay.setContentsMargins(0 if i == 0 else 8, 0, 0 if i == len(cards_consumer)-1 else 8, 0); w_lay.setSpacing(0)
-            w_lay.addWidget(card, alignment=Qt.AlignTop)
-            grid.addWidget(wrapper, row, i * 4, 1, 4)
-        row += 1
-        grid.addWidget(crea_section_label("Tracciamento file negozi"), row, 0, 1, 12); row += 1
-        cards = [
-            {"icona": "⚡", "titolo": "1. Aggrega attivazioni contratti",
-             "desc": "Aggrega file dei contratti attivati per vedere l'adamento delle vendite",
-             "script": paths["TRACCIAMENTO_ATTIVAZIONI"]},
-            {"icona": "📊", "titolo": "2. Aggrega tracciamento pista business",
-             "desc": "Aggrega i file del tracciamento della pista business nei negozzi, contiene:\n - Foglio DB con tutti i record\n - Foglio venditori/Negozi con tabelle di contingenza\n - foglio Avanzamento per vedere le performance in confronto al target",
-             "script": paths["TRACCIAMENTO_PISTA_BIZ"]},
-            {"icona": "🏆", "titolo": "3. Aggrega premio pista business",
-             "desc": "Aggrega i file relativi al premio mensile delle attivazioni relative alla pista business leggendo i dati dal consuntivo del TRACCIAMENTO DELLA PISTA BUSINESS",
-             "script": paths["GARA_PISTA_BUSINESS"]},
-        ]
-        grid.setRowMinimumHeight(row, CARD_HEIGHT + 16)
-        for i, cfg in enumerate(cards):
-            card = ScriptCard(cfg["icona"], cfg["titolo"], cfg["desc"], cfg["script"], terminale,
-                              cartella=cfg.get("cartella"), nomi_file=cfg.get("nomi_file"))
-            wrapper = QWidget(); wrapper.setStyleSheet("background:transparent;")
-            w_lay = QVBoxLayout(wrapper); w_lay.setContentsMargins(0 if i == 0 else 8, 0, 0 if i == len(cards)-1 else 8, 0); w_lay.setSpacing(0)
             w_lay.addWidget(card, alignment=Qt.AlignTop)
             grid.addWidget(wrapper, row, i * 4, 1, 4)
         row += 1
@@ -1583,3 +1552,4 @@ if __name__ == "__main__":
     ))
 
     sys.exit(app.exec())
+    
