@@ -16,6 +16,7 @@ a = Analysis(
     datas=[
         ('version.txt', '.'),
         ('logo.ico', '.'),
+        ('scripts', 'scripts'),
     ],
     hiddenimports=[
     'xlwings',

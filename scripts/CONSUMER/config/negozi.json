@@ -1,0 +1,22 @@
+{
+    "negozi": [
+        "FIDENZA",
+        "GALASSIA",
+        "TORRI",
+        "EUROSIA",
+        "SASSUOLO",
+        "CARPI",
+        "BONIFACIO",
+        "MARANELLO"
+    ],
+    "codici_negozi": {
+        "FID": "FIDENZA",
+        "PC2": "GALASSIA",
+        "TOR": "TORRI",
+        "EUR": "EUROSIA",
+        "SAS": "SASSUOLO",
+        "CAR": "CARPI",
+        "SBF": "BONIFACIO",
+        "MAR": "MARANELLO"
+    }
+}

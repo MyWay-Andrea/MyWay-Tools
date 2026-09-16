@@ -2,7 +2,7 @@
 
 [Setup]
 AppName=MyWay Tools
-AppVersion=1.0.16
+AppVersion=1.0.17
 AppPublisher=Andrea
 DefaultDirName={pf}\MyWayTools
 DefaultGroupName=MyWay Tools

@@ -2,7 +2,7 @@
 
 Applicazione interna per avviare e gestire gli script operativi MyWay da un unico pannello.
 
-L'eseguibile non contiene tutti gli script di lavoro: il menu punta alla cartella condivisa **MyWay Tools su Teams/SharePoint**, configurata in `config.json`. In questo modo gli script possono essere aggiornati centralmente senza dover ricompilare sempre l'applicazione.
+Gli script operativi attivi sono versionati nella cartella `scripts/` e inclusi nella build. La cartella **MyWay Tools su Teams/SharePoint**, configurata dall'utente, rimane dedicata ai file raw, ai dati condivisi, agli output e ai segreti non pubblicabili.
 
 ## Struttura Principale
 
@@ -261,7 +261,7 @@ GitHub latest release -> setup.exe
 
 ## Note Operative
 
-* Gli script operativi non sono inclusi nella build: vengono letti dalla cartella Teams/SharePoint configurata.
-* Le modifiche agli script nella cartella Teams/SharePoint sono disponibili senza ricompilare l'app.
-* Le modifiche a `menu.py`, `updater.py`, `Menu.spec`, `setup.iss`, `requirements_runtime.txt` o `version.txt` richiedono una nuova build e una nuova release.
+* Gli script operativi presenti in `scripts/` sono inclusi nella build.
+* SharePoint continua a contenere input, output e file `.env`; questi ultimi non vengono copiati nella repository.
+* Le modifiche a `menu.py`, agli script, `updater.py`, `Menu.spec`, `setup.iss`, `requirements_runtime.txt` o `version.txt` richiedono una nuova build e una nuova release.
 * L'installer richiede privilegi amministrativi per installare in `Program Files`.

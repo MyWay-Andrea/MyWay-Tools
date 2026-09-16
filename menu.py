@@ -62,6 +62,7 @@ def get_app_dir() -> Path:
     return Path(__file__).parent
 
 BASE_DIR  = get_app_dir()
+SCRIPTS_DIR = get_asset("scripts")
 ICON_PATH = get_asset("logo.ico")
 
 # ─────────────────────────────────────────────────────────────
@@ -74,34 +75,40 @@ CONFIG_PATH = get_asset("config.json")
 _REL_PATHS = {
     "RAW_FILES"                 :"SCRIPT/00_RAW_FILE",
     # BUSINESS
-    "ESTRAI_FILE_GARA"             : "SCRIPT/BUSINESS/13_ESTRAI_FILE_GARA/ESTRAI_FILE_GARA.py",
-    "FCST"                      : "SCRIPT/BUSINESS/12_FCST_BUSINESS/crea_report_aggregato.py",
-    "APPUNTAMENTI_SETTIMANA"    : "SCRIPT/BUSINESS/02_APPUNTAMENTI_SETTIMANA/script/ESTRAI_APPUNTMANETI_SETTIMANA.py",
+    "ESTRAI_FILE_GARA"          : "BUSINESS/13_ESTRAI_FILE_GARA/ESTRAI_FILE_GARA.py",
+    "FCST"                      : "BUSINESS/12_FCST_BUSINESS/crea_report_aggregato.py",
+    "APPUNTAMENTI_SETTIMANA"    : "BUSINESS/02_(OLD)_APPUNTAMENTI_SETTIMANA/script/ESTRAI_APPUNTMANETI_SETTIMANA.py",
         #altri script
-    "FORMATTA_GARA"             : "SCRIPT/BUSINESS/09_ESTRAZIONE_ORDINI_API/AGGREGA_STORICO.py",
-    "FORMATTA_OPPORTUNITA"      : "SCRIPT/BUSINESS/10_ESTRAZIONE_OPP_API/AGGREGA_STORICO.py",
-    "FORMATTA_APPUNTAMENTI"     : "SCRIPT/BUSINESS/11_ESTRAZIONE_APP_API/AGGREGA_STORICO.py",
-    "CHIUSURA_GARA"             : "SCRIPT/BUSINESS/09_ESTRAZIONE_ORDINI_API/CHIUSURA_GARA.py",
+    "FORMATTA_GARA"             : "BUSINESS/09_ESTRAZIONE_ORDINI_API/AGGREGA_STORICO.py",
+    "FORMATTA_OPPORTUNITA"      : "BUSINESS/10_ESTRAZIONE_OPP_API/AGGREGA_STORICO.py",
+    "FORMATTA_APPUNTAMENTI"     : "BUSINESS/11_ESTRAZIONE_APP_API/AGGREGA_STORICO.py",
+    "CHIUSURA_GARA"             : "BUSINESS/09_ESTRAZIONE_ORDINI_API/CHIUSURA_GARA.py",
         #campagne
-    "DIVIDI_FILE_CAMPAGNE"      : "SCRIPT/BUSINESS/CAMPAGNE/00_DIVIDI_FILE_CAMPAGNE/DIVIDI_CAMPAGNE.py",
-    "AGGREGA_FILE_VENDITORI"    : "SCRIPT/BUSINESS/CAMPAGNE/01_AGGREGA_FILE_VENDITORI/AGGREGA_FILE.py",
-    "PRESA_IN_CARICO"           : "SCRIPT/BUSINESS/CAMPAGNE/02_CONTROLLA_PRESA_IN_CARICO/PRESA_IN_CARICO.py",
+    "DIVIDI_FILE_CAMPAGNE"      : "BUSINESS/CAMPAGNE/00_DIVIDI_FILE_CAMPAGNE/DIVIDI_CAMPAGNE.py",
+    "AGGREGA_FILE_VENDITORI"    : "BUSINESS/CAMPAGNE/01_AGGREGA_FILE_VENDITORI/AGGREGA_FILE.py",
+    "PRESA_IN_CARICO"           : "BUSINESS/CAMPAGNE/02_CONTROLLA_PRESA_IN_CARICO/PRESA_IN_CARICO.py",
     "REPORT_CAMPAGNE"           : "",
     # CONSUMER
     
-    "REPORT_PEDONALITA"         : "SCRIPT/CONSUMER/02_REPORT_PEDONALITA/script/CREA_REPORT_PEDONALITA.py",
-    "CRUSCOTTO_TRACCIAMENTO"     : "SCRIPT/CONSUMER/11_CRUSCOTTO_AGGREGATIVO/CRUSCOTTO_AGGREGATIVO.py",
-    "CRUSCOTTO_GIORNALIERO"     : "SCRIPT/CONSUMER/12_CRUSCOTTO_PISTA_CONSUMER/main.py",
+    "REPORT_PEDONALITA"         : "CONSUMER/02_REPORT_PEDONALITA/script/CREA_REPORT_PEDONALITA.py",
+    "CRUSCOTTO_TRACCIAMENTO"    : "CONSUMER/11_CRUSCOTTO_AGGREGATIVO/CRUSCOTTO_AGGREGATIVO.py",
+    "CRUSCOTTO_GIORNALIERO"     : "CONSUMER/12_CRUSCOTTO_PISTA_CONSUMER/main.py",
     
         #altri script
-    "FORMATTA_PEDONALITA"       : "SCRIPT/CONSUMER/01_FORMATTA_PEDONALITA/script/FORMATTA_PEDONALITA.py",
-    "FORMATTA_MAGAZZINO"        : "SCRIPT/CONSUMER/03_FORMATTA_MAGAZZINO/FORMATTA_MAGAZZINO.py",
+    "FORMATTA_PEDONALITA"       : "CONSUMER/01_FORMATTA_PEDONALITA/script/FORMATTA_PEDONALITA.py",
+    "FORMATTA_MAGAZZINO"        : "CONSUMER/03_FORMATTA_MAGAZZINO/FORMATTA_MAGAZZINO.py",
 
 }
 
 def _build_paths(sharepoint_root: Path) -> dict:
-    """Costruisce il dizionario dei path assoluti a partire dalla root SharePoint."""
-    return {key: sharepoint_root / rel for key, rel in _REL_PATHS.items()}
+    """Costruisce i path del codice locale e dei dati su SharePoint."""
+    paths = {
+        key: SCRIPTS_DIR / rel
+        for key, rel in _REL_PATHS.items()
+        if key != "RAW_FILES"
+    }
+    paths["RAW_FILES"] = sharepoint_root / _REL_PATHS["RAW_FILES"]
+    return paths
 
 def carica_config() -> dict | None:
     """Legge config.json. Restituisce None se non esiste o è corrotto."""
@@ -486,7 +493,7 @@ def lancia_script(nome_script, terminale: TerminaleWidget, on_finished=None):
     terminale.write_safe(f"Avvio: {script_path.name}\n", C_LOG_TEXT)
     terminale.write_safe("─" * 60 + "\n", "#333333")
 
-    if not script_path.exists():
+    if not script_path.is_file():
         terminale.write_safe(f"❌ File non trovato: {script_path}\n", C_LOG_ERR)
         terminale.write_safe("─" * 60 + "\n", "#333333")
         if on_finished:
@@ -498,11 +505,19 @@ def lancia_script(nome_script, terminale: TerminaleWidget, on_finished=None):
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        env["BASE_DIR"] = str(BASE_DIR)
+
+        bootstrap = (
+            "import runpy, sys; "
+            "from pathlib import Path; "
+            "script = sys.argv[1]; "
+            "sys.argv = sys.argv[1:]; "
+            "sys.path.insert(0, str(Path(script).resolve().parent)); "
+            "runpy.run_path(script, run_name='__main__')"
+        )
 
         try:
             process = subprocess.Popen(
-                [python_exe, "-u", str(script_path)],
+                [python_exe, "-u", "-c", bootstrap, str(script_path)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace",
@@ -1412,6 +1427,7 @@ class MainWindow(QMainWindow):
         self.sharepoint_root = sharepoint_root
         self.paths = _build_paths(sharepoint_root)
         os.environ["BASE_DIR"] = str(sharepoint_root)
+        os.environ["MYWAY_SHAREPOINT_ROOT"] = str(sharepoint_root)
 
         self.setWindowTitle("MyWay Tools")
         self.resize(1280, 800)
@@ -1552,4 +1568,3 @@ if __name__ == "__main__":
     ))
 
     sys.exit(app.exec())
-    

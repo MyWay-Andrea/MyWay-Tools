@@ -1,0 +1,141 @@
+{
+    "venditori": [
+        {
+            "nome_crm": "A.MILANI",
+            "alias_cb": [
+                "alberto, milani",
+                "alberto,milani",
+                "milani, alberto",
+                "milani, alberto - extra",
+                "milani,alberto",
+                "a.milani",
+                "m.alberto",
+                "milani",
+                "alberto"
+            ]
+        },
+        {
+            "nome_crm": "D.CARUGO",
+            "alias_cb": [
+                "danilo, carugo",
+                "danilo,carugo",
+                "carugo, danilo - extra",
+                "carugo, danilo",
+                "carugo,danilo",
+                "d.carugo",
+                "c.danilo",
+                "carugo",
+                "carugo extra",
+                "danilo"
+            ]
+        },
+        {
+            "nome_crm": "D.GNANI",
+            "alias_cb": [
+                "doriano, gnani",
+                "doriano,gnani",
+                "gnani, doriano",
+                "gnani, doriano - extra",
+                "gnani,doriano",
+                "d.gnani",
+                "g.doriano",
+                "gnani",
+                "doriano"
+            ]
+        },
+        {
+            "nome_crm": "E.AGALLIU",
+            "alias_cb": [
+                "eduart, agalliu",
+                "eduart,agalliu",
+                "agalliu, eduart",
+                "agalliu, eduart - extra",
+                "agalliu,eduart",
+                "e.agalliu",
+                "a.eduart",
+                "agalliu",
+                "eduart"
+            ]
+        },
+        {
+            "nome_crm": "E.PIGNATTA",
+            "alias_cb": [
+                "enrico, pignatta",
+                "enrico,pignatta",
+                "pignatta, enrico",
+                "pignatta, enrico - extra",
+                "pignatta,enrico",
+                "e.pignatta",
+                "p.enrico",
+                "pignatta",
+                "enrico"
+            ]
+        },
+        {
+            "nome_crm": "F.ARLOTTA",
+            "alias_cb": [
+                "fabio, arlotta",
+                "fabio,arlotta",
+                "arlotta, fabio",
+                "arlotta, fabio - extra",
+                "arlotta,fabio",
+                "f.arlotta",
+                "a.fabio",
+                "arlotta",
+                "fabio"
+            ]
+        },
+        {
+            "nome_crm": "G.MANDELLI",
+            "alias_cb": [
+                "giorgio, mandelli",
+                "giorgio,mandelli",
+                "mandelli, giorgio",
+                "mandelli, giorgio - extra",
+                "mandelli,giorgio",
+                "g.mandelli",
+                "m.giorgio",
+                "mandelli",
+                "giorgio"
+            ]
+        },
+        {
+            "nome_crm": "G.MARRA",
+            "alias_cb": [
+                "giovanni, marra",
+                "giovanni,marra",
+                "marra, giovanni",
+                "marra, giovanni - extra",
+                "marra,giovanni",
+                "g.marra",
+                "m.giovanni",
+                "marra",
+                "giovanni"
+            ]
+        },
+        {
+            "nome_crm": "M.SALA",
+            "alias_cb": [
+                "mauro, sala",
+                "mauro,sala",
+                "sala, mauro",
+                "sala, mauro - extra",
+                "sala,mauro",
+                "m.sala",
+                "s.mauro",
+                "sala",
+                "mauro"
+            ]
+        },
+        {
+            "nome_crm": "CRM MWR",
+            "alias_cb": [
+                "crm my way",
+                "crm, my way",
+                "crm mwr",
+                "crm, mwr",
+                "crm"
+            ]
+        }
+    ]
+}
