@@ -2,6 +2,9 @@
     "venditori": [
         {
             "nome_crm": "A.MILANI",
+            "sharepoint_site_path": "/sites/AlbertoMilani",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Alberto Milani/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "alberto, milani",
                 "alberto,milani",
@@ -16,6 +19,9 @@
         },
         {
             "nome_crm": "D.CARUGO",
+            "sharepoint_site_path": "/sites/DaniloCarugo",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Danilo Carugo/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "danilo, carugo",
                 "danilo,carugo",
@@ -31,6 +37,9 @@
         },
         {
             "nome_crm": "D.GNANI",
+            "sharepoint_site_path": "/sites/DorianoGnani",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Doriano Gnani/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "doriano, gnani",
                 "doriano,gnani",
@@ -45,6 +54,9 @@
         },
         {
             "nome_crm": "E.AGALLIU",
+            "sharepoint_site_path": "/sites/EduartAgalliu",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Eduart Agalliu/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "eduart, agalliu",
                 "eduart,agalliu",
@@ -59,6 +71,9 @@
         },
         {
             "nome_crm": "E.PIGNATTA",
+            "sharepoint_site_path": "/sites/EnricoPignatta",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Enrico Pignatta/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "enrico, pignatta",
                 "enrico,pignatta",
@@ -73,6 +88,9 @@
         },
         {
             "nome_crm": "F.ARLOTTA",
+            "sharepoint_site_path": "/sites/BUSINESS-ARLOTTA",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Fabio Arlotta/AGENDA -PERFORMANCE",
             "alias_cb": [
                 "fabio, arlotta",
                 "fabio,arlotta",
@@ -87,6 +105,9 @@
         },
         {
             "nome_crm": "G.MANDELLI",
+            "sharepoint_site_path": "/sites/GiorgioMandelli",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Giorgio Mandelli/BUSINESS/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "giorgio, mandelli",
                 "giorgio,mandelli",
@@ -101,6 +122,9 @@
         },
         {
             "nome_crm": "G.MARRA",
+            "sharepoint_site_path": "/sites/GiovanniMarra",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Giovanni Marra/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "giovanni, marra",
                 "giovanni,marra",
@@ -115,6 +139,9 @@
         },
         {
             "nome_crm": "M.SALA",
+            "sharepoint_site_path": "/sites/MauroSala",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Mauro Sala/AGENDA - PERFORMANCE",
             "alias_cb": [
                 "mauro, sala",
                 "mauro,sala",

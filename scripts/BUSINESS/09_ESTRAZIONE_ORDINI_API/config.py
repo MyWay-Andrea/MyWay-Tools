@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+from io import BytesIO
 from pathlib import Path
 import sys
 from datetime import datetime
@@ -9,10 +10,14 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font
 
 BUSINESS_DIR = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = BUSINESS_DIR.parent
 if str(BUSINESS_DIR) not in sys.path:
     sys.path.insert(0, str(BUSINESS_DIR))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from common.crm_reportistica import API_KEY as REPORTISTICA_API_KEY, BASE_URL as REPORTISTICA_BASE_URL
+from graph_sharepoint import GraphSharePointClient
 
 '''
 file configurazione per i dati dell'API e per la mapaptura dei dati
@@ -22,24 +27,73 @@ API_KEY = REPORTISTICA_API_KEY
 BASE_URL = REPORTISTICA_BASE_URL
 
 
-#PERCORSI
+#PERCORSI SHAREPOINT GRAPH
 #-------------------------------------------------------------------------------------
-PATH_HOME           = Path.home()
-PATH_DIR            = Path(
-    os.environ.get(
-        "MYWAY_SHAREPOINT_ROOT",
-        PATH_HOME / "My Way S.r.l" / "MyWay Tools - MyWay Tools",
-    )
-)
+SHAREPOINT_HOSTNAME = os.getenv("SHAREPOINT_HOSTNAME", "").strip()
+SHAREPOINT_SCAMBIO_SITE_PATH = os.getenv("SHAREPOINT_SCAMBIO_SITE_PATH", "").strip()
+SHAREPOINT_SCAMBIO_LIBRARY_NAME = os.getenv("SHAREPOINT_SCAMBIO_LIBRARY_NAME", "").strip()
+PATH_PARQUET = os.getenv("SHAREPOINT_SCAMBIO_PARQUET_FOLDER", "").strip(" /")
+PATH_BASI_DATI = os.getenv("SHAREPOINT_BUSINESS_BASI_DATI_FOLDER", "").strip(" /")
+PATH_STORICO_BASI_DATI = f"{PATH_BASI_DATI}/STORICO"
+PATH_STORICO_PARQUET = f"{PATH_PARQUET}/STORICO"
+FILE_STORICO_GARA_PARQUET = "Storico Gara.parquet"
+PATH_BACKUP_STORICO_GARA = f"{PATH_STORICO_PARQUET}/BACKUP"
+PATH_BACKUP_STORICO_GARA_XLSX = f"{PATH_STORICO_BASI_DATI}/BACKUP"
 
-PERCORSO_TEAMS         = PATH_HOME / "My Way S.r.l" / "00_SCAMBIO DOCUMENTI - 00_SCAMBIO DOCUMENTI"
-PATH_PARQUET           = PERCORSO_TEAMS / ".parquet"
-PATH_BASI_DATI         = PERCORSO_TEAMS / "BASI_DATI_xlsx"
-PATH_STORICO_BASI_DATI = PATH_BASI_DATI / "STORICO"
-PATH_STORICO_PARQUET   = PATH_PARQUET / "STORICO"
-FILE_STORICO_GARA_PARQUET = PATH_STORICO_PARQUET / "Storico Gara.parquet"
-PATH_BACKUP_STORICO_GARA  = PATH_STORICO_PARQUET / "BACKUP"
-PATH_BACKUP_STORICO_GARA_XLSX = PATH_STORICO_BASI_DATI / "BACKUP"
+_GRAPH_CLIENT = None
+_GRAPH_DRIVE_ID = None
+
+
+def _drive_sharepoint():
+    global _GRAPH_CLIENT, _GRAPH_DRIVE_ID
+    mancanti = [
+        nome for nome, valore in {
+            "SHAREPOINT_HOSTNAME": SHAREPOINT_HOSTNAME,
+            "SHAREPOINT_SCAMBIO_SITE_PATH": SHAREPOINT_SCAMBIO_SITE_PATH,
+            "SHAREPOINT_SCAMBIO_LIBRARY_NAME": SHAREPOINT_SCAMBIO_LIBRARY_NAME,
+            "SHAREPOINT_SCAMBIO_PARQUET_FOLDER": PATH_PARQUET,
+            "SHAREPOINT_BUSINESS_BASI_DATI_FOLDER": PATH_BASI_DATI,
+        }.items() if not valore
+    ]
+    if mancanti:
+        raise ValueError("Configurazione SharePoint Gara incompleta: " + ", ".join(mancanti))
+    if _GRAPH_CLIENT is None:
+        _GRAPH_CLIENT = GraphSharePointClient()
+        sito = _GRAPH_CLIENT.trova_sito(SHAREPOINT_HOSTNAME, SHAREPOINT_SCAMBIO_SITE_PATH)
+        raccolta = _GRAPH_CLIENT.trova_raccolta_documenti(
+            sito["id"], SHAREPOINT_SCAMBIO_LIBRARY_NAME
+        )
+        _GRAPH_DRIVE_ID = str(raccolta["id"])
+    return _GRAPH_CLIENT, _GRAPH_DRIVE_ID
+
+
+def elenca_file_sharepoint(cartella, crea=False):
+    client, drive_id = _drive_sharepoint()
+    return client.elenca_file_cartella(drive_id, cartella, crea=crea)
+
+
+def scarica_file_sharepoint(cartella, nome_file, obbligatorio=True):
+    file_trovati = elenca_file_sharepoint(cartella, crea=not obbligatorio)
+    corrispondenze = [
+        file for file in file_trovati
+        if str(file.get("name", "")).casefold() == nome_file.casefold()
+    ]
+    if not corrispondenze:
+        if obbligatorio:
+            raise FileNotFoundError(f"{nome_file} non trovato in SharePoint: {cartella}")
+        return None
+    if len(corrispondenze) > 1:
+        raise ValueError(f"Più file chiamati {nome_file!r} in {cartella}")
+    client, drive_id = _drive_sharepoint()
+    file_remoto = corrispondenze[0]
+    return {**file_remoto, "content": client.scarica_file(drive_id, file_remoto["id"])}
+
+
+def carica_file_sharepoint(cartella, nome_file, contenuto, content_type):
+    client, drive_id = _drive_sharepoint()
+    return client.carica_bytes(
+        drive_id, cartella, nome_file, contenuto, content_type=content_type
+    )
 
 #COLONNE FILE 
 #-------------------------------------------------------------------------------------
@@ -63,31 +117,24 @@ COLONNE_CORRETTE_STORICO = ['Cliente (Ordine)', 'Partita IVA (Ordine)', 'ID Prat
 #-------------------------------------------------------------------------------------
 #trova file da elaborare
 def trova_file(path_cartella, parametro):
-    ESTENSIONI = ["*.xlsx", ".xlsm", ".xls", ".parquet"]
-    file_trovati = [f for ext in ESTENSIONI for f in path_cartella.glob(f"*{ext}")]
-    file_chose = None
-
-    for file in file_trovati:
-        if parametro == "Gara":
-            if "inflow" in file.name.lower():
-                try:
-                    file_chose = file.rename(file.parent / "Gara (Inflow).xlsx")
-
-                except Exception as e:
-                    print(f" ⚠️ Rinomina fallita: {e}")
-                    file_chose = file
-        elif parametro == "Storico":
-            if "storico gara" in file.name.lower():
-                    file_chose = file
-                    
-    if file_chose is None:
+    file_trovati = elenca_file_sharepoint(path_cartella, crea=True)
+    parola = "inflow" if parametro == "Gara" else "storico gara"
+    candidati = [
+        file for file in file_trovati
+        if parola in str(file.get("name", "")).casefold()
+    ]
+    if not candidati:
         print("["+Fore.RED+"ERRORE"+Fore.RESET+f"] Nessun file che rispetti il parametro: {parametro}")
         sys.exit(1)
-
-    return file_chose
+    candidati.sort(
+        key=lambda file: str(file.get("lastModifiedDateTime", "")), reverse=True
+    )
+    client, drive_id = _drive_sharepoint()
+    scelto = candidati[0]
+    return {**scelto, "content": client.scarica_file(drive_id, scelto["id"])}
 
 #formatta file excel
-def _formatta_excel(path: str):
+def _formatta_excel(path):
     '''
     Funzione che serve per dare un pò di colore al file finale, e per dare il giusto formato 
     alle date ai prezzi.
@@ -144,14 +191,21 @@ def _formatta_excel(path: str):
                 cell.font = font_arancione_testo
             elif str(cell.value).strip().lower() == "annullato":
                 cell.font = font_rosso_testo
-    wb.save(path)   
+    if isinstance(path, BytesIO):
+        output = BytesIO()
+        wb.save(output)
+        path.seek(0)
+        path.truncate()
+        path.write(output.getvalue())
+        path.seek(0)
+    else:
+        wb.save(path)
 
-#carica i file sulla cartella ".parquet", "BASI_DATI_xlsx"
-def carica_su_teams(df, *args: Path) -> None:
+# Carica i file nelle cartelle SharePoint ".parquet" e "BASI_DATI_xlsx".
+def carica_su_teams(df, *args) -> None:
     '''
-    Funzione dinamica di caricamento file su Teams, permette di essere utilizzata sia per caricare i
-    file della gara corrente, sia quelli dello storico, riconoscendo in automatico i path inseriti
-    e smistando i file nelle cartelle corrette
+    Carica tramite Graph sia i file della gara corrente sia quelli dello storico,
+    riconoscendo la destinazione SharePoint richiesta.
     '''
     try:
         if not isinstance(df, pd.DataFrame):
@@ -160,30 +214,34 @@ def carica_su_teams(df, *args: Path) -> None:
             )   
         
         for path in args:
+            if path == PATH_PARQUET:
+                nome_file, formato = "Gara (Inflow).parquet", "parquet"
+            elif path == PATH_BASI_DATI:
+                nome_file, formato = "Gara (Inflow).xlsx", "excel"
+            elif path == PATH_STORICO_PARQUET:
+                nome_file, formato = "Storico Gara.parquet", "parquet"
+            elif path == PATH_STORICO_BASI_DATI:
+                nome_file, formato = "Storico Gara.xlsx", "excel"
+            else:
+                raise ValueError(f"Destinazione SharePoint Gara non riconosciuta: {path}")
 
-            #FILE GARA
-            if ".parquet" in path.name:
-                filename = path / "Gara (Inflow).parquet"
-                df.to_parquet(filename, index = False)
+            buffer = BytesIO()
+            if formato == "parquet":
+                df.to_parquet(buffer, index=False)
+                content_type = "application/octet-stream"
+            else:
+                df.to_excel(buffer, index=False, engine="openpyxl")
+                buffer.seek(0)
+                _formatta_excel(buffer)
+                content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            caricato = carica_file_sharepoint(
+                path, nome_file, buffer.getvalue(), content_type
+            )
+            print(Fore.GREEN + f"SharePoint: {caricato.get('webUrl', nome_file)}")
 
-            elif "BASI_DATI_xlsx" in path.name:
-                filename = path / "Gara (Inflow).xlsx"
-                df.to_excel(filename, index = False, engine = "openpyxl")
-                _formatta_excel(filename)
-
-            #FILE STORICO
-            elif ".parquet" in path.parent.name and "STORICO" in path.name:
-                filename = path / "Storico Gara.parquet"
-                df.to_parquet(filename, index = False)
-
-            elif "BASI_DATI_xlsx" in path.parent.name and "STORICO" in path.name:
-                filename = path / "Storico Gara.xlsx"
-                df.to_excel(filename, index = False, engine = "openpyxl")
-                _formatta_excel(filename)
-
-        print(Fore.GREEN + "Caricamento su Teams avvenuto con successo\n")
+        print(Fore.GREEN + "Caricamento su SharePoint avvenuto con successo\n")
     except Exception as e:
-        print("["+Fore.RED+"ERRORE"+Fore.RESET+f"] Caricamento file su Temas fallito --> {e}")
+        print("["+Fore.RED+"ERRORE"+Fore.RESET+f"] Caricamento file su SharePoint fallito --> {e}")
         raise
 
 #CONVERSIONE API
@@ -233,7 +291,7 @@ TIPOLOGIA_SERVIZIO_MAP = {
     "25" : "RATA TEL DATI",
     "26" : "SOL TEL DATI",
     "27" : "NOLEGGIO OP.",
-    "28" : "RATA TEL VOCE",
+    "28" : "ENERGIA",
     None : "NON SEGNATA"
 
 }

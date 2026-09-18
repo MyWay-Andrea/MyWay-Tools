@@ -1,4 +1,4 @@
-from pathlib import Path
+from io import BytesIO
 import pandas as pd
 from datetime import datetime
 from colorama import Fore, init
@@ -6,24 +6,25 @@ init(autoreset = True)
 
 from config import (
     trova_file,
-    PATH_ONEDRIVE_FILE
+    PATH_INPUT_PARQUET
 )
 
-def estrai_df(file: Path, ext: str) -> pd.DataFrame:
+def estrai_df(file: dict, ext: str) -> pd.DataFrame:
+    contenuto = BytesIO(file["content"])
     if ext in ["xls", "xlsx"]:
-        df = pd.read_excel(file, dtype=str)
+        df = pd.read_excel(contenuto, dtype=str)
     elif ext == "parquet":
-        df = pd.read_parquet(file)
+        df = pd.read_parquet(contenuto)
     elif ext == "csv":
-        df = pd.read_csv(file, dtype=str)
+        df = pd.read_csv(contenuto, dtype=str)
     else:
         raise ValueError("[" + Fore.RED + "ERRORE" + Fore.RESET + f"] Estensione '{ext}' non supportata: ")
     
-    print(Fore.GREEN + "✓ " + Fore.RESET + f"df {file.name}")
+    print(Fore.GREEN + "OK " + Fore.RESET + f"df {file['name']}")
     return df
 
-def _leggi_estensione_file(file:Path) -> tuple[Path, str]:
-    return file, file.name.split(".")[1]
+def _leggi_estensione_file(file: dict) -> tuple[dict, str]:
+    return file, str(file["name"]).rsplit(".", 1)[-1].lower()
 
 def formatta_df(df:pd.DataFrame) -> pd.DataFrame:
 
@@ -60,9 +61,9 @@ if __name__ == "__main__":
 
     # 1. importa file 
     print("\n === Ricerca file per file FCST ===")
-    file_gara = trova_file(PATH_ONEDRIVE_FILE, "gara")
-    file_opportunita = trova_file(PATH_ONEDRIVE_FILE, "opportunita")
-    file_appuntamenti = trova_file(PATH_ONEDRIVE_FILE, "appuntamenti")
+    file_gara = trova_file(PATH_INPUT_PARQUET, "gara")
+    file_opportunita = trova_file(PATH_INPUT_PARQUET, "opportunita")
+    file_appuntamenti = trova_file(PATH_INPUT_PARQUET, "appuntamenti")
 
     
     # 2. chiama funzione 

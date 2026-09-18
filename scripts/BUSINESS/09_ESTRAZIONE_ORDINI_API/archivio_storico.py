@@ -1,8 +1,6 @@
 import hashlib
-import os
-import shutil
 from datetime import date, datetime
-from pathlib import Path
+from io import BytesIO
 
 import pandas as pd
 
@@ -10,6 +8,9 @@ from config import (
     COLONNE_CORRETTE_STORICO,
     FILE_STORICO_GARA_PARQUET,
     PATH_BACKUP_STORICO_GARA,
+    PATH_STORICO_PARQUET,
+    carica_file_sharepoint,
+    scarica_file_sharepoint,
 )
 
 
@@ -231,11 +232,16 @@ def archivio_valido(df):
     return set(SCHEMA_ARCHIVIO).issubset(df.columns)
 
 
-def leggi_archivio(path=FILE_STORICO_GARA_PARQUET):
-    archivio = pd.read_parquet(path)
+def leggi_archivio(contenuto=None):
+    if contenuto is None:
+        remoto = scarica_file_sharepoint(
+            PATH_STORICO_PARQUET, FILE_STORICO_GARA_PARQUET
+        )
+        contenuto = remoto["content"]
+    archivio = pd.read_parquet(BytesIO(contenuto))
     if not archivio_valido(archivio):
         raise ValueError(
-            f"Il file {path} non usa ancora lo schema tecnico dell'archivio."
+            f"Il file {FILE_STORICO_GARA_PARQUET} non usa ancora lo schema tecnico dell'archivio."
         )
     return normalizza_schema_archivio(archivio)
 
@@ -296,34 +302,39 @@ def chiudi_periodi_precedenti(archivio, anno_corrente, trimestre_corrente):
     return risultato[SCHEMA_ARCHIVIO]
 
 
-def _backup(path):
-    if not path.exists():
+def _backup(remoto):
+    if remoto is None:
         return None
-    PATH_BACKUP_STORICO_GARA.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    destinazione = PATH_BACKUP_STORICO_GARA / (
-        f"Storico Gara_{timestamp}.parquet"
+    timestamp = datetime.now().strftime("%Y%m%d")
+    nome_backup = f"Storico Gara_{timestamp}.parquet"
+    return carica_file_sharepoint(
+        PATH_BACKUP_STORICO_GARA,
+        nome_backup,
+        remoto["content"],
+        "application/octet-stream",
     )
-    shutil.copy2(path, destinazione)
-    return destinazione
 
 
-def salva_archivio_atomico(df, path=FILE_STORICO_GARA_PARQUET):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    backup = _backup(path)
-    temporaneo = path.with_name(f".{path.stem}.tmp{path.suffix}")
-
+def salva_archivio_atomico(df):
+    remoto = scarica_file_sharepoint(
+        PATH_STORICO_PARQUET,
+        FILE_STORICO_GARA_PARQUET,
+        obbligatorio=False,
+    )
+    backup = _backup(remoto)
     df = normalizza_schema_archivio(df)
-    try:
-        df.to_parquet(temporaneo, index=False)
-        verifica = pd.read_parquet(temporaneo)
-        if len(verifica) != len(df) or not archivio_valido(verifica):
-            raise ValueError("Verifica del Parquet temporaneo fallita.")
-        os.replace(temporaneo, path)
-    finally:
-        if temporaneo.exists():
-            temporaneo.unlink()
+    buffer = BytesIO()
+    df.to_parquet(buffer, index=False)
+    contenuto = buffer.getvalue()
+    verifica = pd.read_parquet(BytesIO(contenuto))
+    if len(verifica) != len(df) or not archivio_valido(verifica):
+        raise ValueError("Verifica del Parquet in memoria fallita.")
+    carica_file_sharepoint(
+        PATH_STORICO_PARQUET,
+        FILE_STORICO_GARA_PARQUET,
+        contenuto,
+        "application/octet-stream",
+    )
 
     return backup
 

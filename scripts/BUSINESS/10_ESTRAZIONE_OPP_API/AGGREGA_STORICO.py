@@ -1,3 +1,5 @@
+from io import BytesIO
+
 import pandas as pd
 from colorama import Fore, init
 
@@ -30,7 +32,9 @@ def aggiorna_storico(df_opportunita: pd.DataFrame) -> pd.DataFrame:
         raise TypeError(f"Atteso pandas.DataFrame, ricevuto {type(df_opportunita).__name__}")
 
     file_storico = trova_file(PATH_STORICO_BASI_DATI, "Storico")
-    df_storico = pd.read_excel(file_storico, dtype=str, engine="openpyxl")
+    df_storico = pd.read_excel(
+        BytesIO(file_storico["content"]), dtype=str, engine="openpyxl"
+    )
     df_storico = formatta_dati(df_storico)
 
     df_vtiger = df_storico[

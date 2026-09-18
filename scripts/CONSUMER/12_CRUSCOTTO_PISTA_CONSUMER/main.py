@@ -47,9 +47,40 @@ from config import (
     TEST_RUN,
     TIPI_DATO_ATTESI,
 )
-from graph_sharepoint import GraphSharePointClient
 from leggi_file_raw import leggi_tutti_file_raw
 from invia_email import invia_report
+
+CARTELLA_SCRIPT_GENERALE = CARTELLA_CONSUMER.parent
+percorso_generale = str(CARTELLA_SCRIPT_GENERALE)
+while percorso_generale in sys.path:
+    sys.path.remove(percorso_generale)
+sys.path.insert(0, percorso_generale)
+sys.modules.pop("graph_sharepoint", None)
+from graph_sharepoint import GraphSharePointClient
+
+
+def _cerca_file_avanzamenti(
+    client_sharepoint: GraphSharePointClient,
+    drive_id: str,
+    percorso_cartella: str,
+) -> list[dict]:
+    estensioni_excel = {".xlsx", ".xlsm", ".xls"}
+    file_trovati = [
+        elemento
+        for elemento in client_sharepoint.elenca_file_cartella(
+            drive_id,
+            percorso_cartella,
+        )
+        if "avanzamenti" in str(elemento.get("name", "")).casefold()
+        and Path(str(elemento.get("name", ""))).suffix.casefold()
+        in estensioni_excel
+        and not str(elemento.get("name", "")).startswith("~$")
+    ]
+    return sorted(
+        file_trovati,
+        key=lambda elemento: str(elemento.get("lastModifiedDateTime", "")),
+        reverse=True,
+    )
 
 
 def _carica_configurazione_negozi() -> tuple[list[str], dict[str, str]]:
@@ -339,7 +370,8 @@ def main() -> None:
             SHAREPOINT_RAW_LIBRARY_NAME,
         )
         drive_id_raw = raccolta_raw["id"]
-        file_raw = client_sharepoint.cerca_file_avanzamenti(
+        file_raw = _cerca_file_avanzamenti(
+            client_sharepoint,
             drive_id_raw,
             SHAREPOINT_RAW_FOLDER,
         )

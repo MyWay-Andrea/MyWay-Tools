@@ -1,5 +1,6 @@
 import time
 from datetime import datetime
+from io import BytesIO
 
 import pandas as pd
 from colorama import Fore, init
@@ -13,6 +14,7 @@ from config import (
     TIPOLOGIA_SERVIZIO_MAP,
     TIPO_RELAZIONE_MAP,
     _formatta_excel,
+    carica_file_sharepoint,
 )
 from estrai_gara_API import (
     filtra_ordini_periodo_gara,
@@ -147,12 +149,19 @@ def main():
     df_formattato = df_formattato[df_formattato["Stato Ordine"] == "Attivato"].copy()
     df_output = df_formattato[COLONNE_OUTPUT_GARA]
 
-    PATH_BASI_DATI.mkdir(parents=True, exist_ok=True)
-    output = PATH_BASI_DATI / nome_file_chiusura(periodo, anno)
-    df_output.to_excel(output, index=False, engine="openpyxl")
-    _formatta_excel(output)
+    nome_output = nome_file_chiusura(periodo, anno)
+    buffer = BytesIO()
+    df_output.to_excel(buffer, index=False, engine="openpyxl")
+    buffer.seek(0)
+    _formatta_excel(buffer)
+    caricato = carica_file_sharepoint(
+        PATH_BASI_DATI,
+        nome_output,
+        buffer.getvalue(),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
-    print(Fore.GREEN + f"File salvato: {output}")
+    print(Fore.GREEN + f"File salvato: {caricato.get('webUrl', nome_output)}")
     print(f"Tempo di esecuzione: {time.perf_counter() - start:.2f} secondi")
     print("=== Fine chiusura gara ===\n")
 

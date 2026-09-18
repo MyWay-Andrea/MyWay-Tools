@@ -1,8 +1,9 @@
 from elabora_fcst import main as elabora_fcst
 
 from config import(
+    carica_report_venditore,
     trova_file,
-    PATH_ONEDRIVE_FILE,
+    PATH_INPUT_PARQUET,
     PATH_OUTPUT_FCST,
     MESI_IT,
     trova_periodo_gara
@@ -10,6 +11,7 @@ from config import(
 )
 import pandas as pd
 import re
+from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from colorama import Fore, init
@@ -219,6 +221,13 @@ def scrivi_report_excel(path_file, fogli: dict) -> None:
             df.to_excel(writer, sheet_name=nome_foglio, index=False)
     formatta_excel(path_file)
 
+
+def crea_report_bytes(fogli: dict) -> bytes:
+    buffer = BytesIO()
+    scrivi_report_excel(buffer, fogli)
+    buffer.seek(0)
+    return buffer.getvalue()
+
 def venditori_presenti(*dataframes: tuple[pd.DataFrame, str]) -> list[str]:
     venditori = set()
 
@@ -239,8 +248,6 @@ def venditori_presenti(*dataframes: tuple[pd.DataFrame, str]) -> list[str]:
 def main(df_gara, df_oppo, df_appu):
     print("\n === Creazione file FCST ===")
 
-    PATH_OUTPUT_FCST.mkdir(parents=True, exist_ok=True)
-
     col_venditore_gara = trova_colonna(df_gara, "proprietario", "ordine")
     col_venditore_oppo = trova_colonna(df_oppo, "proprietario", "opportun")
     col_venditore_appu = trova_colonna(df_appu, "in carico")
@@ -254,28 +261,37 @@ def main(df_gara, df_oppo, df_appu):
     file_creati = []
 
     for venditore in venditori:
+        # CRM confluisce nel report Governance ma non ha un report personale.
+        if str(venditore).strip().upper().startswith("CRM"):
+            continue
         df_gara_venditore = filtra_per_venditore(df_gara, col_venditore_gara, venditore)
         df_oppo_venditore = filtra_per_venditore(df_oppo, col_venditore_oppo, venditore)
         df_appu_venditore = filtra_per_venditore(df_appu, col_venditore_appu, venditore)
 
-        path_file = PATH_OUTPUT_FCST / f"FCST_{pulisci_nome_file(venditore)}.xlsx"
-        scrivi_report_excel(
-            path_file,
+        nome_file = f"FCST_{pulisci_nome_file(venditore)}.xlsx"
+        contenuto = crea_report_bytes(
             crea_fogli_report(df_gara_venditore, df_oppo_venditore, df_appu_venditore)
         )
-        file_creati.append(path_file)
-        print(Fore.GREEN + "✓ " + Fore.RESET + f"{path_file.name}")
+        try:
+            caricato = carica_report_venditore(venditore, nome_file, contenuto)
+        except (KeyError, ValueError) as errore:
+            print(f"[{Fore.RED}ATTENZIONE{Fore.RESET}] salto report {venditore}: {errore}")
+            continue
+        file_creati.append(caricato)
+        print(Fore.GREEN + "OK " + Fore.RESET + f"{nome_file}")
 
-    path_governance = PATH_OUTPUT_FCST / "FCST_GOVERNANCE.xlsx"
-    scrivi_report_excel(
-        path_governance,
+    nome_governance = "FCST_GOVERNANCE.xlsx"
+    contenuto_governance = crea_report_bytes(
         crea_fogli_report(df_gara, df_oppo, df_appu)
     )
-    file_creati.append(path_governance)
+    governance = carica_report_venditore(
+        "G.MANDELLI", nome_governance, contenuto_governance
+    )
+    file_creati.append(governance)
 
-    print(Fore.GREEN + "✓ " + Fore.RESET + f"{path_governance.name}")
+    print(Fore.GREEN + "OK " + Fore.RESET + nome_governance)
     print(f"\nReport creati: {len(file_creati)}")
-    print(f"Cartella output: {PATH_OUTPUT_FCST}")
+    print(f"Destinazione: {PATH_OUTPUT_FCST}")
 
     return file_creati
 
@@ -284,9 +300,9 @@ if __name__ == "__main__":
 
     # 1. importa file 
     print("\n === Ricerca file per file FCST ===")
-    file_gara = trova_file(PATH_ONEDRIVE_FILE, "gara")
-    file_opportunita = trova_file(PATH_ONEDRIVE_FILE, "opportunita")
-    file_appuntamenti = trova_file(PATH_ONEDRIVE_FILE, "appuntamenti")
+    file_gara = trova_file(PATH_INPUT_PARQUET, "gara")
+    file_opportunita = trova_file(PATH_INPUT_PARQUET, "opportunita")
+    file_appuntamenti = trova_file(PATH_INPUT_PARQUET, "appuntamenti")
 
     
     # 2. chiama funzione 

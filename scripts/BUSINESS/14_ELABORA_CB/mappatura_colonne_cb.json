@@ -1,0 +1,26 @@
+{
+    "ragione_sociale": [
+        "ragione_sociale"
+    ],
+    "partita_iva": [
+        "Partita_Iva"
+    ],
+    "custcode": [
+        "custcode"
+    ],
+    "sede_legale": [
+        "sede_legale",
+        "via_sede_legale",
+        "indirizzo",
+        "Sede"
+    ],
+    "email": [
+        "email",
+        "mail",
+        "Email",
+        "E-mail",
+        "E_MAIL_REFERENTE_AZIENDALE",
+        "e_mail",
+        "referente aziendale"
+    ]
+}

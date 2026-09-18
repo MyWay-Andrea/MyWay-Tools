@@ -1,0 +1,43 @@
+import os
+import sys
+from pathlib import Path
+
+CARTELLA_SCRIPT = Path(__file__).resolve().parent
+CARTELLA_CONSUMER = CARTELLA_SCRIPT.parent
+CARTELLA_SCRIPT_GENERALE = CARTELLA_CONSUMER.parent
+
+if str(CARTELLA_SCRIPT_GENERALE) not in sys.path:
+    sys.path.insert(0, str(CARTELLA_SCRIPT_GENERALE))
+
+import config_env  # noqa: E402,F401
+
+PATH_RAW_FILE = CARTELLA_SCRIPT_GENERALE / "00_RAW_FILE"
+FILE_NEGOZI = CARTELLA_CONSUMER / "config" / "negozi.json"
+
+PAROLE_CHIAVE_FILE = ("GIACENZE_ARTICOLI",)
+NOME_FILE_OUTPUT = "GIACENZA_SMARTPHONE_{timestamp}.xlsx"
+
+INTESTAZIONE_CODICE_ARTICOLO = "Cod.Art."
+INTESTAZIONE_DESCRIZIONE = "Descrizione"
+SUFFISSO_COLONNA_GIACENZA = "GIAC."
+INTESTAZIONE_TOTALE_GIACENZA = "TOT. GIAC."
+INTESTAZIONE_TOTALE_VALORE = "TOT. VAL."
+PATH_OUTPUT_TEST = Path.home() / "Downloads"
+
+SHAREPOINT_GRAPH_CLIENT_ID = os.getenv("SHAREPOINT_GRAPH_CLIENT_ID", "").strip()
+SHAREPOINT_GRAPH_TENANT_ID = os.getenv("SHAREPOINT_GRAPH_TENANT_ID", "").strip()
+SHAREPOINT_GRAPH_CLIENT_SECRET = os.getenv(
+    "SHAREPOINT_GRAPH_CLIENT_SECRET", ""
+).strip()
+
+SHAREPOINT_RAW_HOSTNAME = os.getenv("SHAREPOINT_HOSTNAME", "mywaysrl.sharepoint.com").strip()
+SHAREPOINT_RAW_SITE_PATH = os.getenv("SHAREPOINT_MYWAY_TOOLS_SITE_PATH", "/sites/MyWayTools").strip()
+SHAREPOINT_RAW_LIBRARY_NAME = os.getenv("SHAREPOINT_MYWAY_TOOLS_LIBRARY_NAME", "Shared Documents").strip()
+SHAREPOINT_RAW_FOLDER = os.getenv(
+    "SHAREPOINT_RAW_FOLDER", "MyWay Tools/SCRIPT/00_RAW_FILE"
+).strip(" /")
+
+GIACENZE_TEST_RUN = os.getenv("GIACENZE_TEST_RUN", "true").strip().casefold()
+if GIACENZE_TEST_RUN not in {"true", "false"}:
+    raise ValueError("GIACENZE_TEST_RUN deve essere 'true' oppure 'false'")
+GIACENZE_TEST_RUN = GIACENZE_TEST_RUN == "true"

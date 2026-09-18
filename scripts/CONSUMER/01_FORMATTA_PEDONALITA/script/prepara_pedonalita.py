@@ -1,7 +1,8 @@
 import pandas as pd
 import sys
+from io import BytesIO
 
-from config import NEGOZIO_CONDITION, COLONNE_ORDINATE, trova_file, PATH_RAW_FOLDER
+from config import NEGOZIO_CONDITION, COLONNE_ORDINATE, trova_raw_pedonalita
 
 
 #AGGIUNGI NEGOZIO N BASE AL CODICE
@@ -76,19 +77,16 @@ def seleziona_colonne(df, colonne):
 
 #FLUSSO PRINCIPALE
 #-------------------------------------------------------------------------
-def main(path):
+def main():
     try:
-        print("\nRicerca file in Raw Folder...")
-        vuoto, ped_raw = trova_file(path)
-        if ped_raw is None:
-            print("File is None") 
-            sys.exit()
+        print("\nRicerca RAW Pedonalita su SharePoint...")
+        ped_raw = trova_raw_pedonalita()
     except Exception as e:
         print(f"Errore durante la ricerca del file: {e}")
         sys.exit()
         
     #leggi file 
-    df = pd.read_excel(ped_raw)
+    df = pd.read_excel(BytesIO(ped_raw["content"]))
 
     subset = aggiungi_negozio(df)
     subset = prepara_data_ora(subset)

@@ -61,9 +61,25 @@ def identifica_pista(
 def _numero_o_zero(valore: object, *, riferimento: str) -> int | float:
     if valore is None or (isinstance(valore, str) and not valore.strip()):
         return 0
-    if isinstance(valore, bool) or not isinstance(valore, (int, float)):
+    if isinstance(valore, bool):
         raise ValueError(f"Valore non numerico in {riferimento}: {valore!r}")
-    return valore
+    if isinstance(valore, (int, float)):
+        return valore
+    if isinstance(valore, str):
+        testo = valore.strip().replace("\u00a0", "").replace(" ", "")
+        if "," in testo and "." in testo:
+            # L'ultimo separatore rappresenta i decimali; l'altro le migliaia.
+            if testo.rfind(",") > testo.rfind("."):
+                testo = testo.replace(".", "").replace(",", ".")
+            else:
+                testo = testo.replace(",", "")
+        else:
+            testo = testo.replace(",", ".")
+        try:
+            return float(testo)
+        except ValueError:
+            pass
+    raise ValueError(f"Valore non numerico in {riferimento}: {valore!r}")
 
 
 def _numero_o_vuoto(

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Exchange App RBAC | Reportistica My Way</title>
+<style>
+:root{--blue:#075a9c;--navy:#102a43;--line:#dbe5ee;--page:#edf3f8;--note:#fff6d9;--ok:#e8f7ef}*{box-sizing:border-box}body{margin:0;background:var(--page);color:#243b53;font:16px/1.6 "Segoe UI",Arial,sans-serif}main{max-width:960px;margin:32px auto;padding:0 20px}.hero{padding:34px 38px;color:#fff;background:linear-gradient(135deg,#064a80,#0c75b8);border-radius:16px 16px 0 0}.hero h1{margin:0 0 8px;font-size:30px;line-height:1.2}.hero p{margin:0;opacity:.94}article{padding:34px 38px 44px;background:#fff;border:1px solid var(--line);border-top:0;border-radius:0 0 16px 16px;box-shadow:0 8px 28px #102a4314}h2{display:flex;align-items:center;gap:10px;margin:38px 0 16px;color:var(--navy);font-size:21px}h2:before{content:"";width:5px;height:25px;background:#0c75b8;border-radius:3px}h2:first-of-type{margin-top:0}code{padding:2px 5px;border-radius:4px;background:#edf3f8;color:#173b5b;font:.9em Consolas,"Courier New",monospace}.intro,.notice,.status{padding:16px 18px;border-radius:8px}.intro{margin:22px 0;background:#e8f3fb;border-left:5px solid #0c75b8}.notice{background:var(--note);border-left:5px solid #d59200}.status{background:var(--ok);border-left:5px solid #24965c}.step{margin:24px 0;padding:22px;border:1px solid var(--line);border-radius:10px;background:#fcfdff}.step h3{margin:0 0 10px;color:var(--blue);font-size:18px}.code-title{display:inline-block;margin:14px 0 -1px;padding:5px 11px;border-radius:7px 7px 0 0;background:var(--navy);color:#d9e8f4;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}pre{margin:0 0 14px;padding:17px;overflow:auto;border:1px solid #213f59;border-radius:0 8px 8px 8px;background:#102a43;color:#f4f8fb}pre code{padding:0;background:transparent;color:inherit;font-size:14px}ul,ol{padding-left:24px}li+li{margin-top:6px}a{color:#075a9c;font-weight:600}.small{color:#627d98;font-size:14px}@media print{body{background:#fff}main{margin:0;max-width:none;padding:0}article{box-shadow:none}}@media(max-width:600px){main{margin:0;padding:0}.hero,article{border-radius:0;padding:25px 20px}.hero h1{font-size:25px}}
+</style></head>
+<body><main><header class="hero"><h1>Exchange App RBAC</h1><p>Configurazione dell'invio Graph limitato alla mailbox <strong>reportistica@mywaysrl.it</strong></p></header><article>
+<div class="intro"><strong>Obiettivo.</strong> Consentire all'app Microsoft Entra usata da <code>14_ELABORA_CB</code> di inviare report tramite Microsoft Graph <strong>solo</strong> dalla mailbox indicata.</div>
+<p>La configurazione e' nel cloud Microsoft 365 / Exchange Online. I comandi possono essere eseguiti da un PC qualsiasi, ma usando un account con gli adeguati privilegi Exchange e Microsoft Entra.</p>
+<h2>Chi deve eseguirla</h2><p>Normalmente l'amministratore Microsoft 365 / Exchange. Puo' operare dal proprio PC o dal PC del tecnico; non e' necessario essere amministratore locale del PC.</p><p>L'account deve poter gestire le assegnazioni App RBAC. Microsoft indica normalmente il ruolo Entra <strong>Exchange Administrator</strong> e un'assegnazione delegante in Exchange, tipicamente tramite <strong>Organization Management</strong>.</p>
+<h2>Dati dell'app precompilati</h2><p>Questi sono i valori dell'app <strong>ELABORA CB - Invio Report</strong>, inseriti per l'amministratore che eseguira' la configurazione:</p><div class="code-title">Valori da usare</div><pre><code>Application (client) ID         : 977573f0-d883-4258-9ffe-56db725888da
+Tenant ID                       : 1ea73f05-81a0-46d3-9cb1-9a3ccd1752e9
+Enterprise application Object ID: a99728dd-4527-4db0-88bf-2ad7bbeb3784
+Mailbox mittente                : reportistica@mywaysrl.it</code></pre><p class="small">L'Object ID usato da Exchange e' quello dell'Enterprise application, non quello di App registrations. Il client secret non e' riportato qui: non serve alla configurazione RBAC e non va inoltrato in un file condiviso.</p>
+<h2>Attenzione ai permessi globali</h2><div class="notice">App RBAC assegna <code>Application Mail.Send</code> entro uno scope. I permessi Entra e le assegnazioni RBAC Exchange si sommano. Se l'app ha gia' il permesso globale <code>Microsoft Graph &gt; Application &gt; Mail.Send</code>, l'amministratore deve valutarne rimozione e revoca del consenso: altrimenti il limite alla sola mailbox non e' efficace. Non rimuoverlo se l'app e' usata da altri processi senza valutarne l'impatto.</div>
+<h2>Procedura</h2>
+<section class="step"><h3>1. Verifica preliminare</h3><ol><li>Verificare che <code>reportistica@mywaysrl.it</code> abbia una mailbox Exchange Online attiva.</li><li>In <strong>App registrations &gt; [app] &gt; API permissions</strong>, verificare l'eventuale presenza di <code>Microsoft Graph &gt; Application &gt; Mail.Send</code>.</li></ol></section>
+<section class="step"><h3>2. Collegamento a Exchange Online PowerShell</h3><div class="code-title">PowerShell — una sola volta se necessario</div><pre><code>Install-Module ExchangeOnlineManagement -Scope CurrentUser</code></pre><div class="code-title">PowerShell — collegamento</div><pre><code>Connect-ExchangeOnline</code></pre></section>
+<section class="step"><h3>3. Impostare i valori</h3><p>I valori sono gia' precompilati.</p><div class="code-title">PowerShell</div><pre><code>$appId = "977573f0-d883-4258-9ffe-56db725888da"
+$entraServicePrincipalObjectId = "a99728dd-4527-4db0-88bf-2ad7bbeb3784"
+$mailbox = "reportistica@mywaysrl.it"
+$scopeName = "Scope-Graph-Reportistica"
+$appName = "ELABORA CB - Invio Report"</code></pre></section>
+<section class="step"><h3>4. Creare lo scope della sola mailbox</h3><div class="code-title">PowerShell — crea scope</div><pre><code>New-ManagementScope &#96;
+  -Name $scopeName &#96;
+  -RecipientRestrictionFilter "PrimarySmtpAddress -eq '$mailbox'"</code></pre><div class="code-title">PowerShell — verifica scope</div><pre><code>Get-Recipient -ResultSize Unlimited &#96;
+  -Filter (Get-ManagementScope $scopeName).RecipientFilter |
+  Format-Table Name,PrimarySmtpAddress,RecipientType</code></pre><div class="notice">Il risultato deve contenere soltanto <code>reportistica@mywaysrl.it</code>. Se contiene altri destinatari, fermarsi e correggere il filtro.</div></section>
+<section class="step"><h3>5. Creare o recuperare il service principal Exchange</h3><div class="code-title">PowerShell — creazione</div><pre><code>New-ServicePrincipal &#96;
+  -AppId $appId &#96;
+  -ObjectId $entraServicePrincipalObjectId &#96;
+  -DisplayName $appName</code></pre><p>Se esiste gia', non ricrearlo. Recuperarlo cosi' (eseguire anche dopo la creazione):</p><div class="code-title">PowerShell — recupero</div><pre><code>$exoSp = Get-ServicePrincipal -Identity $appId
+$exoSp | Format-List DisplayName,AppId,ObjectId</code></pre></section>
+<section class="step"><h3>6. Assegnare il solo diritto di invio</h3><div class="code-title">PowerShell</div><pre><code>New-ManagementRoleAssignment &#96;
+  -Name "Graph-Reportistica-MailSend" &#96;
+  -App $exoSp.ObjectId &#96;
+  -Role "Application Mail.Send" &#96;
+  -CustomResourceScope $scopeName</code></pre><p>Non assegnare <code>Application Exchange Full Access</code>: il ruolo minimo necessario e' <code>Application Mail.Send</code>.</p></section>
+<section class="step"><h3>7. Test di autorizzazione</h3><div class="code-title">PowerShell — mailbox autorizzata</div><pre><code>Test-ServicePrincipalAuthorization &#96;
+  -Identity $exoSp.ObjectId &#96;
+  -Resource $mailbox</code></pre><p>Per <code>Application Mail.Send</code>, il risultato deve indicare <code>InScope : True</code>.</p><div class="code-title">PowerShell — mailbox non autorizzata</div><pre><code>Test-ServicePrincipalAuthorization &#96;
+  -Identity $exoSp.ObjectId &#96;
+  -Resource "altra-mailbox@mywaysrl.it"</code></pre><p>Qui il risultato deve indicare <code>InScope : False</code>.</p></section>
+<section class="step"><h3>8. Configurazione dello script</h3><div class="code-title">File .env</div><pre><code>GRAPH_SENDER_EMAIL=reportistica@mywaysrl.it
+EMAIL_DRY_RUN=true</code></pre><p>Mantenere il dry-run durante il collaudo. Solo dopo il test positivo e dopo l'aggiornamento del codice a Graph, impostare <code>EMAIL_DRY_RUN=false</code>.</p></section>
+<h2>Stato dello script</h2><div class="status">Lo script usa Microsoft Graph: ottiene un token client-credentials e chiama <code>POST /users/reportistica@mywaysrl.it/sendMail</code>. Prima del primo invio reale mantenere <code>EMAIL_DRY_RUN=true</code>, verificare la simulazione e poi impostare <code>EMAIL_DRY_RUN=false</code>.</div>
+<h2>Riferimenti Microsoft</h2><ul><li><a href="https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac">App RBAC in Exchange Online</a></li><li><a href="https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/new-serviceprincipal">New-ServicePrincipal</a></li><li><a href="https://learn.microsoft.com/en-us/graph/permissions-reference">Microsoft Graph permissions: Mail.Send</a></li></ul>
+</article></main></body></html>

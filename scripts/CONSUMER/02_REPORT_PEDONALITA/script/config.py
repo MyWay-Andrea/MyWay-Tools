@@ -1,5 +1,4 @@
 from pathlib import Path
-import os
 from datetime import datetime 
 import shutil
 import time
@@ -11,12 +10,7 @@ PATH_DIR = Path(__file__).parents[1]
 
 PATH_HOME = Path.home()
 PATH_TEMPLATE = PATH_DIR / "TEMPLATE" / "TEMPLATE_PEDONALITA.xlsx"
-PATH_REPORT_FOLDER = (
-    Path(os.environ.get("LOCALAPPDATA", Path.home()))
-    / "MyWayTools"
-    / "reports"
-    / "pedonalita"
-)
+PATH_REPORT_FOLDER = PATH_DIR / "report"
 PATH_REPORT_TEAMS = PATH_HOME / "My Way S.r.l" / "TEAM CONSUMER - TEAM CONSUMER"
 PATH_DB = PATH_HOME / "My Way S.r.l" / "00_SCAMBIO DOCUMENTI - 00_SCAMBIO DOCUMENTI" / ".parquet"
 

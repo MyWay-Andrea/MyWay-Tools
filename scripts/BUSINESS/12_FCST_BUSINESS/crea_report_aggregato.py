@@ -1,12 +1,19 @@
 from datetime import datetime
-from pathlib import Path
+from io import BytesIO
 
 import pandas as pd
 from colorama import Fore, init
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-from config import PATH_ONEDRIVE_FILE, PATH_OUTPUT_FCST, MESI_IT, trova_file, trova_periodo_gara
+from config import (
+    PATH_INPUT_PARQUET,
+    PATH_OUTPUT_FCST,
+    MESI_IT,
+    carica_report_venditore,
+    trova_file,
+    trova_periodo_gara,
+)
 from elabora_fcst import main as elabora_fcst_main
 from crea_report import (
     conta_per_mese,
@@ -55,61 +62,6 @@ def aggiorna_bordo(cell, left=None, right=None, top=None, bottom=None) -> None:
         top=top or cell.border.top,
         bottom=bottom or cell.border.bottom,
     )
-
-
-def estrai_cognome_venditore(venditore: str) -> str:
-    nome = str(venditore).strip()
-    if "." in nome:
-        nome = nome.split(".", 1)[1]
-    return nome.split()[0].strip().upper()
-
-
-def normalizza_nome_cartella(nome: str) -> str:
-    return " ".join(str(nome).replace("-", " ").upper().split())
-
-
-def trova_cartella_agente(venditore: str) -> Path | None:
-    cognome = estrai_cognome_venditore(venditore)
-    if not cognome:
-        return None
-
-    root_agenti = PATH_OUTPUT_FCST.parent
-    prefisso_business = f"BUSINESS {cognome}"
-
-    for cartella in root_agenti.iterdir():
-        if not cartella.is_dir():
-            continue
-
-        nome_normalizzato = normalizza_nome_cartella(cartella.name)
-        if nome_normalizzato.startswith(prefisso_business):
-            return cartella
-
-    return None
-
-
-def trova_cartella_performance(venditore: str) -> Path | None:
-    cartella_agente = trova_cartella_agente(venditore)
-    if cartella_agente is None:
-        return None
-
-    if str(venditore).strip().upper() == "G.MANDELLI":
-        cartella_business = cartella_agente / "BUSINESS"
-        if cartella_business.exists():
-            cartella_agente = cartella_business
-
-    for cartella in cartella_agente.iterdir():
-        if not cartella.is_dir():
-            continue
-
-        nome_normalizzato = normalizza_nome_cartella(cartella.name)
-        
-        parametri = ["AGENDA", "PERFORMANCE"]
-
-        if all(param in nome_normalizzato for param in parametri):
-            return cartella
-        
-
-    return None
 
 
 def filtra_per_venditori_presenti(df: pd.DataFrame, col_venditore: str, venditori: list[str]) -> pd.DataFrame:
@@ -257,7 +209,7 @@ def crea_riga_fcst(
     return riga
 
 
-def formatta_fcst(path_file: Path) -> None:
+def formatta_fcst(path_file) -> None:
     wb = load_workbook(path_file)
     ws = wb["FCST"]
 
@@ -511,30 +463,13 @@ def main(df_gara: pd.DataFrame, df_oppo: pd.DataFrame, df_appu: pd.DataFrame) ->
         )
     )
 
-    cartelle_output = {}
-    venditori_validi = []
-    for venditore in venditori:
-        cartella_output = trova_cartella_performance(venditore)
-        if cartella_output is None:
-            if venditore_crm(venditore):
-                venditori_validi.append(venditore)
-                continue
-
-            print("[" 
-                + Fore.RED
-                + "ATTENZIONE"
-                + Fore.RESET
-                + f"] path agente non trovato, salto report: {venditore}"
-            )
-            continue
-        cartelle_output[venditore] = cartella_output
-        venditori_validi.append(venditore)
-
-    venditori_con_path = ordina_venditori_crm_ultimo(venditori_validi)
+    venditori_con_path = ordina_venditori_crm_ultimo(venditori)
     file_creati = []
 
     for venditore in venditori_con_path:
-        cartella_output = cartelle_output.get(venditore)
+        # CRM contribuisce al totale di Mandelli ma non ha un report personale.
+        if venditore_crm(venditore):
+            continue
 
         if venditore.strip().upper() == "G.MANDELLI":
             df_gara_report = filtra_per_venditori_presenti(df_gara, col_venditore_gara, venditori_con_path)
@@ -547,9 +482,6 @@ def main(df_gara: pd.DataFrame, df_oppo: pd.DataFrame, df_appu: pd.DataFrame) ->
             df_appu_report = filtra_per_venditore(df_appu, col_venditore_appu, venditore)
             includi_totale = False
 
-        if cartella_output is None:
-            continue
-
         fogli = crea_fogli_report(df_gara_report, df_oppo_report, df_appu_report)
         fogli["FCST"] = crea_pivot_fcst_aggregato(
             df_gara_report,
@@ -558,22 +490,29 @@ def main(df_gara: pd.DataFrame, df_oppo: pd.DataFrame, df_appu: pd.DataFrame) ->
             includi_totale=includi_totale,
         )
 
-        path_file = cartella_output / f"FCST_{pulisci_nome_file(venditore)}.xlsx"
-        scrivi_report_excel(path_file, fogli)
-        formatta_foglio_fcst(path_file)
+        nome_file = f"FCST_{pulisci_nome_file(venditore)}.xlsx"
+        buffer = BytesIO()
+        scrivi_report_excel(buffer, fogli)
+        formatta_foglio_fcst(buffer)
+        contenuto = buffer.getvalue()
+        try:
+            caricato = carica_report_venditore(venditore, nome_file, contenuto)
+        except (KeyError, ValueError) as errore:
+            print(f"[{Fore.RED}ATTENZIONE{Fore.RESET}] salto report {venditore}: {errore}")
+            continue
 
-        file_creati.append(path_file)
-        print(Fore.GREEN + "\u2713 " + Fore.RESET + f"{path_file.name}")
+        file_creati.append(caricato)
+        print(Fore.GREEN + "OK " + Fore.RESET + nome_file)
 
     print(f"\nFile creati: {len(file_creati)}")
-    print(f"Cartella base output: {PATH_OUTPUT_FCST.parent}")
+    print(f"Destinazione: {PATH_OUTPUT_FCST}")
 
     return file_creati
 
 
 if __name__ == "__main__":
-    file_gara = trova_file(PATH_ONEDRIVE_FILE, "gara")
-    file_opportunita = trova_file(PATH_ONEDRIVE_FILE, "opportunita")
-    file_appuntamenti = trova_file(PATH_ONEDRIVE_FILE, "appuntamenti")
+    file_gara = trova_file(PATH_INPUT_PARQUET, "gara")
+    file_opportunita = trova_file(PATH_INPUT_PARQUET, "opportunita")
+    file_appuntamenti = trova_file(PATH_INPUT_PARQUET, "appuntamenti")
     df_gara, df_oppo, df_appu = elabora_fcst_main(file_gara, file_opportunita, file_appuntamenti)
     main(df_gara, df_oppo, df_appu)

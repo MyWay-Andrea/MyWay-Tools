@@ -1,3 +1,5 @@
+from io import BytesIO
+
 import pandas as pd
 
 from config import PATH_STORICO_BASI_DATI, carica_su_teams, trova_file
@@ -25,7 +27,9 @@ def split_storico(df: pd.DataFrame) -> pd.DataFrame:
 
 def aggiorna_storico(df_appuntamenti: pd.DataFrame) -> pd.DataFrame:
     file_storico = trova_file(PATH_STORICO_BASI_DATI, "Storico")
-    df_storico = pd.read_excel(file_storico, dtype=str, engine="openpyxl")
+    df_storico = pd.read_excel(
+        BytesIO(file_storico["content"]), dtype=str, engine="openpyxl"
+    )
     df_storico_precedente = split_storico(formatta_colonne(df_storico))
     df_storico_completo = pd.concat([df_storico_precedente, df_appuntamenti], ignore_index=True)
 

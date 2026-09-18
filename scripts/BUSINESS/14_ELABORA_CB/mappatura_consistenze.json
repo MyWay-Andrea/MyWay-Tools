@@ -1,0 +1,100 @@
+{
+    "consistenze": [
+        {
+            "campo_crm": "FF_VIC_Valoreclient",
+            "alias_cb": ["Valore cliente"]
+        },
+        {
+            "campo_crm": "FF_VIC_EopVoce",
+            "alias_cb": ["Eop Voce", "eop_voce"]
+        },
+        {
+            "campo_crm": "FF_VIC_EopDati",
+            "alias_cb": ["Eop Dati", "eop_dati"]
+        },
+        {
+            "campo_crm": "FF_VIC_TOT_LINK",
+            "alias_cb": ["Eop Tot Link", "Eop_Tot_Link"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_PBX",
+            "alias_cb": ["Eop Pbx", "eop_PBX"]
+        },
+        {
+            "campo_crm": "FF_VIC_EopM2M",
+            "alias_cb": ["Eop M2M", "Eop_M2M"]
+        },
+        {
+            "campo_crm": "FF_VIC_EopLinkDSL",
+            "alias_cb": ["Eop Link DSL", "eop_link_DSL"]
+        },
+        {
+            "campo_crm": "FF_VIC_EopLinkOA",
+            "alias_cb": ["Eop Link OA", "eop_link_OA"]
+        },
+        {
+            "campo_crm": "VIC_EOP_FISSA",
+            "alias_cb": ["Eop Fissa", "EOP_Fissa"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_IOT",
+            "alias_cb": ["Eop IOT", "EOP_IOT"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_Collabor",
+            "alias_cb": ["Eop Collaboration", "EOP_Collaboration"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_WIFI",
+            "alias_cb": ["Eop WIFI", "EOP_WIFI"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_Producti",
+            "alias_cb": ["Eop Productivity", "EOP_Productivity"]
+        },
+        {
+            "campo_crm": "FF_VIC_VALORE_SIM_VOCE",
+            "alias_cb": ["Valore Sim Voce", "di_cui_voce"]
+        },
+        {
+            "campo_crm": "FF_VIC_VALORE_SIM_DATI",
+            "alias_cb": ["Valore Sim Dati", "di_cui_dati"]
+        },
+        {
+            "campo_crm": "FF_VIC_VALORE_LINK",
+            "alias_cb": ["Valore Link", "di_cui_link"]
+        },
+        {
+            "campo_crm": "FF_VIC_VALORE_PBX",
+            "alias_cb": ["Valore Pbx", "di_cui_pbx"]
+        },
+        {
+            "campo_crm": "FF_VIC_VALORE_M2M",
+            "alias_cb": ["Valore M2M", "di_cui_M2M"]
+        },
+        {
+            "campo_crm": "FF_VIC_VALORE_PRODOTTI_INNOVATIVI",
+            "alias_cb": ["Valore Prodotti Innovativi", "di_cui_prodotti_innovativi"]
+        },
+        {
+            "campo_crm": "FF_VIC_EopLinkSU",
+            "alias_cb": ["Eop Link SU", "Eop_Link_SU"]
+        },
+        {
+            "campo_crm": "FF_VIC_EopLinkVRUC",
+            "alias_cb": ["Eop Link VRUC-VRUD-VRUX", "Eop_Link_VRUC_VRUD_VRUX"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_VIK",
+            "alias_cb": ["Eop VIK", "eop_VIK"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_Security",
+            "alias_cb": ["Eop Security", "EOP_Security"]
+        },
+        {
+            "campo_crm": "FF_VIC_EOP_IAAS",
+            "alias_cb": ["Eop IAAS", "EOP_IAAS"]
+        }
+    ]
+}

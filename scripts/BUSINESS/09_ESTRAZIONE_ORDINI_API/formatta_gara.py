@@ -68,7 +68,7 @@ def main(df):
     # 1. Formatta colonne
     df_formattato = formatta_colonne(df)
 
-    # 2. Carica su Teams
+    # 2. Carica su SharePoint tramite Microsoft Graph
 
     df_output = df_formattato[COLONNE_OUTPUT_GARA]
     carica_su_teams(df_output, PATH_BASI_DATI, PATH_PARQUET)

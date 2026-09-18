@@ -1,5 +1,4 @@
 from pathlib import Path
-import os
 from datetime import datetime
 import time
 
@@ -12,12 +11,7 @@ ps. scaricare il file in formato "CSV"
 
 OGGI = datetime.today().strftime(format = "%d-%m-%Y")
 PATH_HOME = Path.home()
-PATH_DIR = Path(
-    os.environ.get(
-        "MYWAY_SHAREPOINT_ROOT",
-        PATH_HOME / "My Way S.r.l" / "MyWay Tools - MyWay Tools",
-    )
-)
+PATH_DIR = Path(__file__).parents[3]
 
 PATH_RAW_FOLDER = PATH_DIR / "SCRIPT" / "00_RAW_FILE"
 PATH_TEAMS = PATH_HOME / "My Way S.r.l" / "00_SCAMBIO DOCUMENTI - 00_SCAMBIO DOCUMENTI"

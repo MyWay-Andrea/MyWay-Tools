@@ -1127,22 +1127,35 @@ def _controlli(sorgenti: dict[str, object], dati: dict[str, pd.DataFrame | pd.Ti
         ("Business", sorgenti["business"], len(dati["business"])),
         ("Pedonalita", sorgenti["pedonalita"], None),
     )
-    for tipo, path, numero_righe in associazioni:
-        path = Path(path)
+    for tipo, file_remoto, numero_righe in associazioni:
+        ultima_modifica = pd.to_datetime(
+            file_remoto.get("lastModifiedDateTime"),
+            errors="coerce",
+            utc=True,
+        )
+        if not pd.isna(ultima_modifica):
+            ultima_modifica = ultima_modifica.tz_localize(None)
         righe.append({
             "SORGENTE": tipo,
             "NEGOZIO": "",
-            "FILE": str(path),
-            "ULTIMA_MODIFICA": datetime.fromtimestamp(path.stat().st_mtime),
+            "FILE": file_remoto.get("webUrl", file_remoto.get("name", "")),
+            "ULTIMA_MODIFICA": ultima_modifica,
             "RIGHE_LETTE": numero_righe,
             "ESITO": "OK",
         })
-    for negozio, path in sorgenti["tracciamenti"].items():
+    for negozio, file_remoto in sorgenti["tracciamenti"].items():
+        ultima_modifica = pd.to_datetime(
+            file_remoto.get("lastModifiedDateTime"),
+            errors="coerce",
+            utc=True,
+        )
+        if not pd.isna(ultima_modifica):
+            ultima_modifica = ultima_modifica.tz_localize(None)
         righe.append({
                 "SORGENTE": "Tracciamento",
                 "NEGOZIO": negozio,
-                "FILE": str(path),
-                "ULTIMA_MODIFICA": datetime.fromtimestamp(path.stat().st_mtime),
+                "FILE": file_remoto.get("webUrl", file_remoto.get("name", "")),
+                "ULTIMA_MODIFICA": ultima_modifica,
                 "RIGHE_LETTE": sum(
                     int((dati[chiave]["NEGOZIO"] == negozio).sum())
                     for chiave in ("energia", "digi", "gadget")

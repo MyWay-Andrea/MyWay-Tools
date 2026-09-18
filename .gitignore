@@ -16,5 +16,5 @@ __pycache__/
 
 #config
 *.json
-!scripts/BUSINESS/config/*.json
-!scripts/CONSUMER/config/*.json
+# I JSON sotto scripts sono risorse versionate (configurazioni e mappature).
+!scripts/**/*.json

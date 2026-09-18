@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import tempfile
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -12,11 +13,12 @@ from config import CROSS_SELLING, MAPPA_PEDONALITA
 
 
 @contextmanager
-def _workbook_compatibile(path: Path):
+def _workbook_compatibile(sorgente: Path | bytes):
     """Crea solo se necessario una copia con valori font OpenXML validi."""
 
     pattern = re.compile(rb'(<(?:\w+:)?family\b[^>]*\bval=")(\d+)(")')
-    with ZipFile(path, "r") as archivio:
+    origine_zip = BytesIO(sorgente) if isinstance(sorgente, bytes) else sorgente
+    with ZipFile(origine_zip, "r") as archivio:
         styles = archivio.read("xl/styles.xml")
 
     def sostituisci(match: re.Match[bytes]) -> bytes:
@@ -27,14 +29,15 @@ def _workbook_compatibile(path: Path):
 
     styles_corretti = pattern.sub(sostituisci, styles)
     if styles_corretti == styles:
-        yield path
+        yield BytesIO(sorgente) if isinstance(sorgente, bytes) else sorgente
         return
 
     handle = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     temporaneo = Path(handle.name)
     handle.close()
     try:
-        with ZipFile(path, "r") as origine, ZipFile(
+        origine_zip = BytesIO(sorgente) if isinstance(sorgente, bytes) else sorgente
+        with ZipFile(origine_zip, "r") as origine, ZipFile(
             temporaneo,
             "w",
             compression=ZIP_DEFLATED,
@@ -66,8 +69,12 @@ def _normalizza_negozio(serie: pd.Series) -> pd.Series:
     )
 
 
-def carica_business(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    with _workbook_compatibile(path) as workbook:
+def carica_business(file_remoto: dict, client_sharepoint) -> tuple[pd.DataFrame, pd.DataFrame]:
+    contenuto = client_sharepoint.scarica_file(
+        str(file_remoto["drive_id"]),
+        str(file_remoto["id"]),
+    )
+    with _workbook_compatibile(contenuto) as workbook:
         raw = pd.read_excel(
             workbook,
             sheet_name="TRACCIAMENTO",
@@ -115,7 +122,8 @@ def carica_business(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def carica_tracciamenti(
-    paths: dict[str, Path],
+    file_remoti: dict[str, dict],
+    client_sharepoint,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Legge il foglio unico TRACCIAMENTO e lo separa per attività."""
 
@@ -126,9 +134,14 @@ def carica_tracciamenti(
         "VENDITORE",
         "OFFERTA / OFFERTA PROPOSTA",
     }
-    for negozio, path in paths.items():
+    for negozio, file_remoto in file_remoti.items():
+        nome_file = str(file_remoto["name"])
+        contenuto = client_sharepoint.scarica_file(
+            str(file_remoto["drive_id"]),
+            str(file_remoto["id"]),
+        )
         df = pd.read_excel(
-            path,
+            BytesIO(contenuto),
             sheet_name="TRACCIAMENTO",
             engine="openpyxl",
         )
@@ -136,10 +149,11 @@ def carica_tracciamenti(
         mancanti = colonne_attese.difference(df.columns)
         if mancanti:
             raise ValueError(
-                f"Colonne mancanti in {path}: {', '.join(sorted(mancanti))}"
+                f"Colonne mancanti in {nome_file}: {', '.join(sorted(mancanti))}"
             )
         df["NEGOZIO"] = negozio
         frames.append(df)
+        print(f"  OK {negozio}: scaricato e letto {nome_file}")
 
     base = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     colonne_base = ["NEGOZIO", "DATA", "VENDITORE", "DESCRIZIONE"]
@@ -166,8 +180,12 @@ def carica_tracciamenti(
     return energia, gadget, digi
 
 
-def carica_pedonalita(path: Path) -> pd.DataFrame:
-    df = pd.read_parquet(path)
+def carica_pedonalita(file_remoto: dict, client_sharepoint) -> pd.DataFrame:
+    contenuto = client_sharepoint.scarica_file(
+        str(file_remoto["drive_id"]),
+        str(file_remoto["id"]),
+    )
+    df = pd.read_parquet(BytesIO(contenuto))
     df.columns = [str(col).strip() for col in df.columns]
     if "Data" not in df.columns or "Negozio" not in df.columns or "Presenze" not in df.columns:
         raise ValueError("Il parquet pedonalita non contiene Data, Negozio e Presenze")

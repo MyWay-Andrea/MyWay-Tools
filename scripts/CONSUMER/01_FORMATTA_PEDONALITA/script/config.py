@@ -1,28 +1,101 @@
 from pathlib import Path
+from io import BytesIO
 import os
-from datetime import datetime 
-import time
+import sys
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-from colorama import Fore, init, Back
+from colorama import Fore, init
 init(autoreset=True)
 
 
-PATH_HOME = Path.home()
-PATH_DATABASE = PATH_HOME / "My Way S.r.l" / "00_SCAMBIO DOCUMENTI - 00_SCAMBIO DOCUMENTI" / ".parquet"
-PATH_TEAM_CONSUMER = PATH_HOME / "My Way S.r.l" / "TEAM CONSUMER - TEAM CONSUMER"/ "_file_report"
-OGGI = datetime.today()
-OGGI_STRF = OGGI.strftime("%d-%m-%Y")
+SCRIPT_DIR = Path(__file__).resolve().parents[3]
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-PATH_DIR = Path(
-    os.environ.get(
-        "MYWAY_SHAREPOINT_ROOT",
-        PATH_HOME / "My Way S.r.l" / "MyWay Tools - MyWay Tools",
+from graph_sharepoint import GraphSharePointClient
+
+SHAREPOINT_HOSTNAME = os.getenv("SHAREPOINT_HOSTNAME", "").strip()
+SHAREPOINT_SCAMBIO_SITE_PATH = os.getenv("SHAREPOINT_SCAMBIO_SITE_PATH", "").strip()
+SHAREPOINT_SCAMBIO_LIBRARY_NAME = os.getenv("SHAREPOINT_SCAMBIO_LIBRARY_NAME", "").strip()
+SHAREPOINT_MYWAY_TOOLS_SITE_PATH = os.getenv("SHAREPOINT_MYWAY_TOOLS_SITE_PATH", "").strip()
+SHAREPOINT_MYWAY_TOOLS_LIBRARY_NAME = os.getenv("SHAREPOINT_MYWAY_TOOLS_LIBRARY_NAME", "").strip()
+SHAREPOINT_RAW_FOLDER = os.getenv("SHAREPOINT_RAW_FOLDER", "").strip(" /")
+PATH_DATABASE = os.getenv("SHAREPOINT_SCAMBIO_PARQUET_FOLDER", "").strip(" /")
+PATH_BASI_DATI = os.getenv("SHAREPOINT_CONSUMER_BASI_DATI_FOLDER", "").strip(" /")
+_GRAPH_CLIENT = None
+_GRAPH_DRIVE_ID = None
+_GRAPH_RAW_DRIVE_ID = None
+
+
+def _drive_sharepoint():
+    global _GRAPH_CLIENT, _GRAPH_DRIVE_ID
+    configurazione = {
+        "SHAREPOINT_HOSTNAME": SHAREPOINT_HOSTNAME,
+        "SHAREPOINT_SCAMBIO_SITE_PATH": SHAREPOINT_SCAMBIO_SITE_PATH,
+        "SHAREPOINT_SCAMBIO_LIBRARY_NAME": SHAREPOINT_SCAMBIO_LIBRARY_NAME,
+        "SHAREPOINT_SCAMBIO_PARQUET_FOLDER": PATH_DATABASE,
+        "SHAREPOINT_CONSUMER_BASI_DATI_FOLDER": PATH_BASI_DATI,
+    }
+    mancanti = [nome for nome, valore in configurazione.items() if not valore]
+    if mancanti:
+        raise ValueError("Configurazione SharePoint Pedonalita incompleta: " + ", ".join(mancanti))
+    if _GRAPH_CLIENT is None:
+        _GRAPH_CLIENT = GraphSharePointClient()
+        sito = _GRAPH_CLIENT.trova_sito(SHAREPOINT_HOSTNAME, SHAREPOINT_SCAMBIO_SITE_PATH)
+        raccolta = _GRAPH_CLIENT.trova_raccolta_documenti(
+            sito["id"], SHAREPOINT_SCAMBIO_LIBRARY_NAME
+        )
+        _GRAPH_DRIVE_ID = str(raccolta["id"])
+    return _GRAPH_CLIENT, _GRAPH_DRIVE_ID
+
+
+def _drive_raw_sharepoint():
+    global _GRAPH_CLIENT, _GRAPH_RAW_DRIVE_ID
+    configurazione = {
+        "SHAREPOINT_HOSTNAME": SHAREPOINT_HOSTNAME,
+        "SHAREPOINT_MYWAY_TOOLS_SITE_PATH": SHAREPOINT_MYWAY_TOOLS_SITE_PATH,
+        "SHAREPOINT_MYWAY_TOOLS_LIBRARY_NAME": SHAREPOINT_MYWAY_TOOLS_LIBRARY_NAME,
+        "SHAREPOINT_RAW_FOLDER": SHAREPOINT_RAW_FOLDER,
+    }
+    mancanti = [nome for nome, valore in configurazione.items() if not valore]
+    if mancanti:
+        raise ValueError("Configurazione RAW Pedonalita incompleta: " + ", ".join(mancanti))
+    if _GRAPH_CLIENT is None:
+        _GRAPH_CLIENT = GraphSharePointClient()
+    if _GRAPH_RAW_DRIVE_ID is None:
+        sito = _GRAPH_CLIENT.trova_sito(
+            SHAREPOINT_HOSTNAME, SHAREPOINT_MYWAY_TOOLS_SITE_PATH
+        )
+        raccolta = _GRAPH_CLIENT.trova_raccolta_documenti(
+            sito["id"], SHAREPOINT_MYWAY_TOOLS_LIBRARY_NAME
+        )
+        _GRAPH_RAW_DRIVE_ID = str(raccolta["id"])
+    return _GRAPH_CLIENT, _GRAPH_RAW_DRIVE_ID
+
+
+def trova_raw_pedonalita() -> dict:
+    client, drive_id = _drive_raw_sharepoint()
+    candidati = [
+        file for file in client.elenca_file_cartella(drive_id, SHAREPOINT_RAW_FOLDER)
+        if "pedonalit" in str(file.get("name", "")).casefold()
+        and str(file.get("name", "")).casefold().endswith((".xlsx", ".xls"))
+    ]
+    if not candidati:
+        raise FileNotFoundError(
+            f"RAW Pedonalita non trovato su SharePoint: {SHAREPOINT_RAW_FOLDER}"
+        )
+    candidati.sort(key=lambda file: str(file.get("lastModifiedDateTime", "")), reverse=True)
+    scelto = candidati[0]
+    print(f"RAW Pedonalita SharePoint: {scelto['name']}")
+    return {**scelto, "content": client.scarica_file(drive_id, scelto["id"])}
+
+
+def elimina_raw_pedonalita(file_remoto: dict) -> None:
+    client, drive_id = _drive_raw_sharepoint()
+    client.elimina_file(
+        drive_id, str(file_remoto["id"]), str(file_remoto.get("eTag", ""))
     )
-)
-
-
-PATH_RAW_FOLDER = PATH_DIR / "SCRIPT" / "00_RAW_FILE" 
+    print(Fore.GREEN + f"RAW eliminato da SharePoint: {file_remoto['name']}")
 
 #FUNZIONI COMUNI
 #---------------------------------------------------------------
@@ -84,10 +157,11 @@ COLONNE_ORDINATE = ["Negozio", "Data", "Ora", "Giorno","Giorno_num", "Fascia ora
 
 #AGGREGA_FILE
 #-------------------------------------------------------------------------
-def formatta_colonna_data(filename, df):
-    
-
-    wb = load_workbook(filename)
+def _excel_formattato(df) -> bytes:
+    buffer = BytesIO()
+    df.to_excel(buffer, index=False, engine="openpyxl")
+    buffer.seek(0)
+    wb = load_workbook(buffer)
     ws = wb.active
 
     # trova colonna "Data"
@@ -102,29 +176,51 @@ def formatta_colonna_data(filename, df):
         for cell in ws[col_letter][1:]:
             cell.number_format = 'DD/MM/YYYY'
 
-    wb.save(filename)
-
-def salva_su_teams_excel(filename, df):
-    
-    df.to_excel(filename, index=False)
-    time.sleep(1)
-    formatta_colonna_data(filename, df)
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
 
 #-------------------------------------------------------------------------
 
 
-def elimina_file_da_cartella(path_basi_dati , path_consumer, path_parquet, ultimo_giorno):
-    #elimina file veechio in base al nome "Pedonalità"
-    print(" ⏳ Eliminazione file datati...")
-    lista_path = [path_basi_dati , path_consumer, path_parquet]
-    for path in lista_path:
-        print(f"\n • Cartella: " + Fore.BLACK + Back.WHITE + f" {path.name} ")
-        for ext in ["*.parquet", "*.xlsx"]:
-            for file in path.glob(ext):
-                if f"Pedonalità" in file.name:
-                    if file.exists():
-                        file.unlink()
-                        print(f" ✅ file {file.name} è stato rimosso per far spazio al nuovo Pedonalità_{ultimo_giorno}{ext} ")
-                    time.sleep(1)
-                    if file.exists():
-                       print("Il file non è stato cancellato ")
+def trova_database_pedonalita() -> dict | None:
+    client, drive_id = _drive_sharepoint()
+    candidati = [
+        file for file in client.elenca_file_cartella(drive_id, PATH_DATABASE, crea=True)
+        if "pedonalit" in str(file.get("name", "")).casefold()
+        and str(file.get("name", "")).casefold().endswith(".parquet")
+    ]
+    if not candidati:
+        return None
+    candidati.sort(key=lambda file: str(file.get("lastModifiedDateTime", "")), reverse=True)
+    scelto = candidati[0]
+    return {**scelto, "content": client.scarica_file(drive_id, scelto["id"])}
+
+
+def _elimina_vecchi_pedonalita(cartella: str, estensione: str) -> None:
+    client, drive_id = _drive_sharepoint()
+    for file in client.elenca_file_cartella(drive_id, cartella, crea=True):
+        nome = str(file.get("name", ""))
+        if "pedonalit" in nome.casefold() and nome.casefold().endswith(estensione):
+            client.elimina_file(drive_id, str(file["id"]), str(file.get("eTag", "")))
+
+
+def salva_database_pedonalita(df, ultimo_giorno: str) -> None:
+    client, drive_id = _drive_sharepoint()
+    parquet = BytesIO()
+    df.to_parquet(parquet, index=False)
+    nome_parquet = f"Pedonalità_{ultimo_giorno}.parquet"
+    nome_excel = f"Pedonalità_{ultimo_giorno}.xlsx"
+
+    _elimina_vecchi_pedonalita(PATH_DATABASE, ".parquet")
+    _elimina_vecchi_pedonalita(PATH_BASI_DATI, ".xlsx")
+    client.carica_bytes(
+        drive_id, PATH_DATABASE, nome_parquet, parquet.getvalue(),
+        content_type="application/octet-stream",
+    )
+    client.carica_bytes(
+        drive_id, PATH_BASI_DATI, nome_excel, _excel_formattato(df),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    print(Fore.GREEN + f"SharePoint: {PATH_DATABASE}/{nome_parquet}")
+    print(Fore.GREEN + f"SharePoint: {PATH_BASI_DATI}/{nome_excel}")

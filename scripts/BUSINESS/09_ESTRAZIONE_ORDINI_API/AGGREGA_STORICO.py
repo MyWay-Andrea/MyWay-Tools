@@ -1,6 +1,6 @@
 import sys
 import time
-import shutil
+from io import BytesIO
 from datetime import datetime
 
 import pandas as pd
@@ -21,7 +21,11 @@ from config import (
     PATH_BASI_DATI,
     PATH_BACKUP_STORICO_GARA_XLSX,
     PATH_STORICO_BASI_DATI,
+    PATH_STORICO_PARQUET,
     carica_su_teams,
+    carica_file_sharepoint,
+    elenca_file_sharepoint,
+    scarica_file_sharepoint,
     trova_file,
     trova_periodo_gara,
 )
@@ -32,35 +36,39 @@ init(autoreset=True)
 
 
 def _backup_excel(file_storico):
-    if not file_storico.exists():
+    if not file_storico:
         return None
-    PATH_BACKUP_STORICO_GARA_XLSX.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    destinazione = (
-        PATH_BACKUP_STORICO_GARA_XLSX
-        / f"Storico Gara_{timestamp}.xlsx"
+    timestamp = datetime.now().strftime("%Y%m%d")
+    return carica_file_sharepoint(
+        PATH_BACKUP_STORICO_GARA_XLSX,
+        f"Storico Gara_{timestamp}.xlsx",
+        file_storico["content"],
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    shutil.copy2(file_storico, destinazione)
-    return destinazione
 
 
 def _trova_chiusura_apr_giu():
-    candidati = sorted(
-        PATH_BASI_DATI.glob("CHIUSURA_GARA_*Apr_Giu*.xlsx"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
+    candidati = [
+        file for file in elenca_file_sharepoint(PATH_BASI_DATI, crea=True)
+        if "chiusura_gara_" in str(file.get("name", "")).casefold()
+        and "apr_giu" in str(file.get("name", "")).casefold()
+        and str(file.get("name", "")).casefold().endswith(".xlsx")
+    ]
+    candidati.sort(
+        key=lambda file: str(file.get("lastModifiedDateTime", "")), reverse=True
     )
     if not candidati:
         raise FileNotFoundError(
             "File CHIUSURA_GARA_Apr_Giu.xlsx non trovato in "
             f"{PATH_BASI_DATI}"
         )
-    return candidati[0]
+    scelto = candidati[0]
+    return scarica_file_sharepoint(PATH_BASI_DATI, scelto["name"])
 
 
 def _inizializza_archivio(df_gara, file_storico):
     print("Prima inizializzazione dell'archivio tecnico...")
-    storico_excel = pd.read_excel(file_storico, dtype=str)
+    storico_excel = pd.read_excel(BytesIO(file_storico["content"]), dtype=str)
 
     # Le righe del nuovo CRM presenti nell'Excel sono sostituite dall'estrazione
     # API, che conserva l'ID Riga CRM necessario all'upsert.
@@ -70,8 +78,8 @@ def _inizializza_archivio(df_gara, file_storico):
     storico_legacy = storico_excel.loc[~mask_nuovo_crm].copy()
 
     file_chiusura = _trova_chiusura_apr_giu()
-    print(f"Caricamento chiusura: {file_chiusura.name}")
-    chiusura_apr_giu = pd.read_excel(file_chiusura, dtype=str)
+    print(f"Caricamento chiusura: {file_chiusura['name']}")
+    chiusura_apr_giu = pd.read_excel(BytesIO(file_chiusura["content"]), dtype=str)
 
     blocco_legacy = prepara_blocco(
         storico_legacy,
@@ -112,8 +120,13 @@ def _inizializza_archivio(df_gara, file_storico):
 
 
 def _carica_o_migra(df_gara, file_storico):
-    if FILE_STORICO_GARA_PARQUET.exists():
-        archivio_esistente = pd.read_parquet(FILE_STORICO_GARA_PARQUET)
+    remoto = scarica_file_sharepoint(
+        PATH_STORICO_PARQUET,
+        FILE_STORICO_GARA_PARQUET,
+        obbligatorio=False,
+    )
+    if remoto:
+        archivio_esistente = pd.read_parquet(BytesIO(remoto["content"]))
         if archivio_valido(archivio_esistente):
             inizio, _, _ = trova_periodo_gara()
             trimestre_corrente = ((inizio.month - 1) // 3) + 1
@@ -125,7 +138,7 @@ def _carica_o_migra(df_gara, file_storico):
                 trimestre_default=trimestre_corrente,
             )
             archivio_esistente = chiudi_periodi_precedenti(
-                leggi_archivio(FILE_STORICO_GARA_PARQUET),
+                leggi_archivio(remoto["content"]),
                 anno_corrente=inizio.year,
                 trimestre_corrente=trimestre_corrente,
             )
@@ -161,9 +174,9 @@ def main(df_gara, file_storico):
     print("\nRiepilogo archivio:")
     print(riepilogo_archivio(archivio).to_string(index=False))
     if backup:
-        print(f"\nBackup creato: {backup}")
+        print(f"\nBackup creato: {backup['name']}")
     if backup_excel:
-        print(f"Backup Excel creato: {backup_excel}")
+        print(f"Backup Excel creato: {backup_excel['name']}")
     print(f"Tempo di esecuzione: {time.perf_counter() - start_script:.2f} secondi")
     return archivio
 
