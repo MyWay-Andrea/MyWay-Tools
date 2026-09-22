@@ -5,6 +5,7 @@ import sys
 import os
 import re
 import json
+import shutil
 import threading
 import subprocess
 from pathlib import Path
@@ -14,7 +15,7 @@ from updater import get_asset
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QScrollArea, QTextEdit,
-    QSizePolicy, QStackedWidget, QGridLayout, QSpacerItem,
+    QSizePolicy, QStackedWidget, QGridLayout, QSpacerItem, QSplitter,
     QFileDialog, QMessageBox, QSplashScreen, QDialog,
     QDialogButtonBox, QLineEdit
 )
@@ -24,34 +25,6 @@ from PySide6.QtGui import (
     QIcon, QPixmap, QPainter, QFont, QLinearGradient, QBrush
 )
 
-
-# ── DEBUG TEMPORANEO ──────────────────────────────────────
-def debug_info():
-    exe_dir  = Path(sys.executable).parent
-    internal = exe_dir / '_internal'
-    
-    lines = [
-        f"frozen: {getattr(sys, 'frozen', False)}",
-        f"sys.executable: {sys.executable}",
-        f"exe_dir: {exe_dir}",
-        f"_internal exists: {internal.exists()}",
-        f"version.txt in exe_dir: {(exe_dir / 'version.txt').exists()}",
-        f"version.txt in _internal: {(internal / 'version.txt').exists()}",
-        f"logo.ico in _internal: {(internal / 'logo.ico').exists()}",
-    ]
-    
-    if (internal / 'version.txt').exists():
-        lines.append(f"version letta: {(internal / 'version.txt').read_text().strip()}")
-    
-    msg = "\n".join(lines)
-    
-    # Scrive su file così lo vedi anche senza console
-    debug_path = Path(os.environ["APPDATA"]) / "MyWayTools" / "debug.txt"
-    debug_path.parent.mkdir(parents=True, exist_ok=True)
-    debug_path.write_text(msg)
-
-debug_info()
-# ── FINE DEBUG ────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────
 # APP DIR  (funziona sia da .py che da .exe PyInstaller)
@@ -68,7 +41,8 @@ ICON_PATH = get_asset("logo.ico")
 # ─────────────────────────────────────────────────────────────
 # CONFIG  ─  lettura / scrittura config.json
 # ─────────────────────────────────────────────────────────────
-CONFIG_PATH = get_asset("config.json")
+LEGACY_CONFIG_PATH = get_asset("config.json")
+CONFIG_PATH = Path(os.environ.get("APPDATA", BASE_DIR)) / "MyWayTools" / "config.json"
 
 # Struttura relativa attesa dentro la cartella SharePoint.
 # Le chiavi corrispondono alle variabili PATH_* del vecchio codice.
@@ -76,6 +50,7 @@ _REL_PATHS = {
     "RAW_FILES"                 :"SCRIPT/00_RAW_FILE",
     # BUSINESS
     "ESTRAI_FILE_GARA"          : "BUSINESS/13_ESTRAI_FILE_GARA/ESTRAI_FILE_GARA.py",
+    "ELABORA_CB"                : "BUSINESS/14_ELABORA_CB/main.py",
     "FCST"                      : "BUSINESS/12_FCST_BUSINESS/crea_report_aggregato.py",
     "APPUNTAMENTI_SETTIMANA"    : "BUSINESS/02_(OLD)_APPUNTAMENTI_SETTIMANA/script/ESTRAI_APPUNTMANETI_SETTIMANA.py",
         #altri script
@@ -101,26 +76,30 @@ _REL_PATHS = {
 
 }
 
-def _build_paths(sharepoint_root: Path) -> dict:
+def _build_paths(sharepoint_root: Path, raw_files_path: Path | None = None) -> dict:
     """Costruisce i path del codice locale e dei dati su SharePoint."""
     paths = {
         key: SCRIPTS_DIR / rel
         for key, rel in _REL_PATHS.items()
         if key != "RAW_FILES"
     }
-    paths["RAW_FILES"] = sharepoint_root / _REL_PATHS["RAW_FILES"]
+    paths["RAW_FILES"] = raw_files_path or (sharepoint_root / _REL_PATHS["RAW_FILES"])
     return paths
 
 def carica_config() -> dict | None:
     """Legge config.json. Restituisce None se non esiste o è corrotto."""
-    if not CONFIG_PATH.exists():
+    source = CONFIG_PATH if CONFIG_PATH.exists() else LEGACY_CONFIG_PATH
+    if not source.exists():
         return None
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
+        with open(source, encoding="utf-8") as f:
             data = json.load(f)
-        root = Path(data.get("sharepoint_root", ""))
-        if not root.exists():
-            return None          # cartella non più raggiungibile
+        root_value = data.get("sharepoint_root", "")
+        raw_value = data.get("raw_files_path", "")
+        root = Path(root_value) if root_value else None
+        raw = Path(raw_value) if raw_value else None
+        if not ((raw and raw.exists()) or (root and root.exists())):
+            return None
         return data
     except Exception:
         return None
@@ -128,8 +107,41 @@ def carica_config() -> dict | None:
 def salva_config(sharepoint_root: Path) -> None:
     """Salva config.json con la root SharePoint scelta dall'utente."""
     data = {"sharepoint_root": str(sharepoint_root)}
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def salva_cartella_raw(raw_files_path: Path, sharepoint_root: Path) -> None:
+    """Salva la cartella RAW scelta dall'utente nel profilo locale."""
+    data = {
+        "sharepoint_root": str(sharepoint_root),
+        "raw_files_path": str(raw_files_path),
+    }
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with CONFIG_PATH.open("w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2, ensure_ascii=False)
+
+
+def prepara_env_locale(sharepoint_root: Path) -> Path | None:
+    """Migra una sola volta il file segreto in APPDATA, fuori dall'installer."""
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return None
+    destinazione = Path(appdata) / "MyWayTools" / ".env"
+    if destinazione.is_file():
+        return destinazione
+
+    candidati = (
+        sharepoint_root / "SCRIPT" / ".env",
+        SCRIPTS_DIR / ".env",
+    )
+    for sorgente in candidati:
+        if sorgente.is_file():
+            destinazione.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(sorgente, destinazione)
+            return destinazione
+    return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -138,8 +150,7 @@ def salva_config(sharepoint_root: Path) -> None:
 class ConfigDialog(QDialog):
     """
     Mostrata all'avvio se config.json manca o la cartella non esiste.
-    Chiede all'utente di scegliere la cartella SharePoint sincronizzata
-    in locale (quella che contiene la sottocartella SCRIPT/).
+    Chiede all'utente soltanto dove conservare i file RAW operativi.
     """
     def __init__(self, messaggio_extra: str = "", parent=None):
         super().__init__(parent)
@@ -147,13 +158,14 @@ class ConfigDialog(QDialog):
         self.setFixedWidth(540)
         self.setStyleSheet(f"background:{C_BG};")
         self.sharepoint_root: Path | None = None
+        self.raw_files_path: Path | None = None
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(30, 30, 30, 24)
         lay.setSpacing(14)
 
         # Icona + titolo
-        titolo = QLabel("📁  Imposta cartella SharePoint")
+        titolo = QLabel("📁  Scegli la cartella RAW_FILES")
         titolo.setStyleSheet(f"font-size:18px; font-weight:bold; color:{C_TEXT_DARK};")
         lay.addWidget(titolo)
 
@@ -165,9 +177,9 @@ class ConfigDialog(QDialog):
             lay.addWidget(lbl_warn)
 
         desc = QLabel(
-            "Seleziona la cartella SharePoint sincronizzata in locale.\n"
-            "Deve contenere la sottocartella  <b>SCRIPT/</b>  con tutti gli script.\n\n"
-            "Esempio:  <code>C:/Users/mario/MyWay</code>"
+            "Questa è la cartella in cui l'app leggerà e copierà i file da elaborare.\n"
+            "Puoi scegliere una cartella locale oppure una cartella aziendale già disponibile sul PC.\n\n"
+            "Potrai cambiarla in qualsiasi momento dalla Panoramica."
         )
         desc.setStyleSheet(f"font-size:13px; color:{C_TEXT_MID};")
         desc.setWordWrap(True)
@@ -176,7 +188,7 @@ class ConfigDialog(QDialog):
         # Campo path + pulsante sfoglia
         row = QHBoxLayout()
         self.field = QLineEdit()
-        self.field.setPlaceholderText("Percorso cartella SharePoint…")
+        self.field.setPlaceholderText("Percorso della cartella RAW_FILES…")
         self.field.setStyleSheet(f"""
             QLineEdit {{
                 font-size:13px; padding:8px 10px;
@@ -202,7 +214,7 @@ class ConfigDialog(QDialog):
         lay.addLayout(row)
 
         # Hint cartella home
-        hint = QLabel(f"💡 La tua home è:  <code>{Path.home()}</code>")
+        hint = QLabel("💡 Scegli una cartella dedicata e facilmente riconoscibile.")
         hint.setStyleSheet(f"font-size:12px; color:{C_TEXT_LIGHT};")
         lay.addWidget(hint)
 
@@ -229,7 +241,7 @@ class ConfigDialog(QDialog):
 
     def _sfoglia(self):
         cartella = QFileDialog.getExistingDirectory(
-            self, "Seleziona cartella SharePoint", str(Path.home())
+            self, "Seleziona la cartella RAW_FILES", str(Path.home())
         )
         if cartella:
             self.field.setText(cartella)
@@ -243,26 +255,30 @@ class ConfigDialog(QDialog):
         if not path.exists():
             QMessageBox.warning(self, "Cartella non trovata",
                                 f"La cartella non esiste:\n{path}\n\n"
-                                "Assicurati che SharePoint sia sincronizzato.")
+                                "Seleziona una cartella esistente.")
             return
-        self.sharepoint_root = path
-        salva_config(path)
+        self.raw_files_path = path
+        self.sharepoint_root = path.parent.parent if path.name.upper() == "00_RAW_FILE" else path.parent
+        salva_cartella_raw(path, self.sharepoint_root)
         self.accept()
 
 
 # ─────────────────────────────────────────────────────────────
 # PALETTE COLORI
 # ─────────────────────────────────────────────────────────────
-C_BG         = "#F5F0EB"
+C_BG         = "#F4F6F9"
 C_PANEL      = "#FFFFFF"
-C_SIDEBAR    = "#FFFFFF"
-C_RED        = "#E60000"
-C_RED_HOVER  = "#CC0000"
-C_RED_LIGHT  = "#FFF0F0"
-C_TEXT_DARK  = "#1A1A1A"
-C_TEXT_MID   = "#555555"
-C_TEXT_LIGHT = "#999999"
-C_BORDER     = "#E8E2DC"
+C_SIDEBAR    = "#111827"
+C_RED        = "#E30613"
+C_RED_HOVER  = "#C9000C"
+C_RED_LIGHT  = "#FDECEE"
+C_FASTWEB    = "#FFD400"
+C_FASTWEB_HOVER = "#F2C900"
+C_FASTWEB_LIGHT = "#FFF7CC"
+C_TEXT_DARK  = "#111827"
+C_TEXT_MID   = "#4B5563"
+C_TEXT_LIGHT = "#7B8494"
+C_BORDER     = "#E3E7ED"
 
 C_LOG_BG   = "#1A1A1A"
 C_LOG_TEXT = "#E0E0E0"
@@ -396,13 +412,18 @@ class ScriptCardSignals(QObject):
     script_finished = Signal(bool)
 
 
+class RemoteCheckSignals(QObject):
+    finished = Signal(bool, str)
+
+
 # ─────────────────────────────────────────────────────────────
 # TERMINALE WIDGET
 # ─────────────────────────────────────────────────────────────
 class TerminaleWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(210)
+        self._collapsed = False
+        self.setMinimumHeight(32)
         self.setStyleSheet(f"background:{C_LOG_BG}; border:none;")
 
         layout = QVBoxLayout(self)
@@ -419,6 +440,16 @@ class TerminaleWidget(QFrame):
         lbl.setStyleSheet(f"color:{C_LOG_OK}; font-family:Courier; font-size:12px; font-weight:bold; background:transparent;")
         h_lay.addWidget(lbl)
         h_lay.addStretch()
+
+        btn_toggle = QPushButton("Nascondi")
+        btn_toggle.setFixedSize(76, 22)
+        btn_toggle.setStyleSheet("""
+            QPushButton { background:#333333; color:#B8BDC7; border:none;
+                          border-radius:4px; font-size:11px; }
+            QPushButton:hover { background:#444444; color:white; }
+        """)
+        btn_toggle.clicked.connect(lambda: self._toggle(btn_toggle))
+        h_lay.addWidget(btn_toggle)
 
         btn_pulisci = QPushButton("Pulisci")
         btn_pulisci.setFixedSize(70, 22)
@@ -463,6 +494,16 @@ class TerminaleWidget(QFrame):
 
     def pulisci(self):
         self.log.clear()
+
+    def _toggle(self, button):
+        self._collapsed = not self._collapsed
+        self.log.setVisible(not self._collapsed)
+        splitter = self.parentWidget()
+        if isinstance(splitter, QSplitter):
+            total = max(sum(splitter.sizes()), 400)
+            terminal_height = 32 if self._collapsed else 190
+            splitter.setSizes([max(1, total - terminal_height), terminal_height])
+        button.setText("Mostra" if self._collapsed else "Nascondi")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -554,8 +595,8 @@ def lancia_script(nome_script, terminale: TerminaleWidget, on_finished=None):
 # ─────────────────────────────────────────────────────────────
 # SCRIPT CARD
 # ─────────────────────────────────────────────────────────────
-CARD_HEIGHT        = 320
-CARD_HEIGHT_STATUS = 320
+CARD_HEIGHT        = 274
+CARD_HEIGHT_STATUS = 274
 
 class ScriptCard(QFrame):
     def __init__(self, icona, titolo, descrizione, script, terminale,
@@ -567,39 +608,40 @@ class ScriptCard(QFrame):
         self.nome_file = nome_file
         self.nomi_file = nomi_file
         self._in_esecuzione = False
+        self._available = bool(script) and Path(script).is_file()
 
         self.setStyleSheet(f"""
-            ScriptCard {{ background:{C_PANEL}; border-radius:14px; border:1px solid {C_BORDER}; }}
-            ScriptCard:hover {{ background:#FFF8F8; border:1px solid {C_RED}; }}
+            ScriptCard {{ background:{C_PANEL}; border-radius:12px; border:1px solid {C_BORDER}; }}
+            ScriptCard:hover {{ background:#FFFFFF; border:1px solid #F1A1A7; }}
         """)
         self.setFixedHeight(CARD_HEIGHT_STATUS if cartella else CARD_HEIGHT)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMinimumWidth(180)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 18, 18, 18)
-        lay.setSpacing(6)
+        lay.setContentsMargins(20, 18, 20, 18)
+        lay.setSpacing(5)
 
         top = QHBoxLayout()
         lbl_icona = QLabel(icona)
-        lbl_icona.setStyleSheet(f"font-size:36px; color:{C_RED}; background:transparent; border:none;")
+        lbl_icona.setStyleSheet(f"font-size:27px; color:{C_RED}; background:transparent; border:none;")
         top.addWidget(lbl_icona)
         num = titolo.split(".")[0].strip()
         lbl_num = QLabel(f"  {num:>02}")
-        lbl_num.setStyleSheet(f"background:{C_RED_LIGHT}; color:{C_RED}; border-radius:7px; font-size:18px; font-weight:bold; padding:4px 10px; border:none;")
-        lbl_num.setFixedHeight(34)
+        lbl_num.setStyleSheet(f"background:{C_FASTWEB}; color:#111827; border-radius:6px; font-size:13px; font-weight:bold; padding:3px 9px; border:none;")
+        lbl_num.setFixedHeight(28)
         top.addWidget(lbl_num)
         top.addStretch()
         lay.addLayout(top)
 
         titolo_pulito = titolo.split(".", 1)[-1].strip()
         lbl_titolo = QLabel(titolo_pulito)
-        lbl_titolo.setStyleSheet(f"font-size:16px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
+        lbl_titolo.setStyleSheet(f"font-size:18px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
         lbl_titolo.setWordWrap(True)
         lay.addWidget(lbl_titolo)
 
         lbl_desc = QLabel(descrizione)
-        lbl_desc.setStyleSheet(f"font-size:13px; color:{C_TEXT_LIGHT}; background:transparent; border:none;")
+        lbl_desc.setStyleSheet(f"font-size:14px; color:{C_TEXT_LIGHT}; background:transparent; border:none;")
         lbl_desc.setWordWrap(True)
         lay.addWidget(lbl_desc)
 
@@ -617,26 +659,29 @@ class ScriptCard(QFrame):
             lay.addWidget(self.status_frame)
         else:
             placeholder = QFrame()
-            placeholder.setFixedHeight(40)
+            placeholder.setFixedHeight(34)
             placeholder.setStyleSheet("background:transparent; border:none;")
             lay.addWidget(placeholder)
 
         self.btn_avvia = QPushButton("Avvia  →")
         self.btn_avvia.setStyleSheet(f"""
-            QPushButton {{ background:{C_RED}; color:white; border:none; border-radius:7px; font-size:15px; font-weight:bold; padding:8px 18px; }}
+            QPushButton {{ background:{C_RED}; color:white; border:none; border-radius:7px; font-size:14px; font-weight:bold; padding:7px 16px; }}
             QPushButton:hover {{ background:{C_RED_HOVER}; }}
             QPushButton:disabled {{ background:#CCCCCC; color:#888888; }}
         """)
         self.btn_avvia.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.btn_avvia.setFixedWidth(180)
-        self.btn_avvia.setFixedHeight(40)
+        self.btn_avvia.setFixedWidth(150)
+        self.btn_avvia.setFixedHeight(38)
         self.btn_avvia.clicked.connect(self._on_avvia_clicked)
         lay.addWidget(self.btn_avvia, alignment=Qt.AlignLeft)
+        if not self._available:
+            self.btn_avvia.setEnabled(False)
+            self.btn_avvia.setText("In sviluppo")
 
         if self.cartella:
             self.timer_stato = QTimer(self)
             self.timer_stato.timeout.connect(self._aggiorna_stato)
-            self.timer_stato.start(1000)
+            self.timer_stato.start(5000)
             self._aggiorna_stato()
 
         self._signals = ScriptCardSignals()
@@ -645,6 +690,8 @@ class ScriptCard(QFrame):
         global_signals.script_terminato.connect(self._on_qualsiasi_script_terminato)
 
     def _on_avvia_clicked(self):
+        if not self._available:
+            return
         scroll = self._trova_scroll()
         pos = scroll.verticalScrollBar().value() if scroll else 0
         self._in_esecuzione = True
@@ -679,6 +726,10 @@ class ScriptCard(QFrame):
 
     def _on_qualsiasi_script_terminato(self):
         if not self._in_esecuzione:
+            if not self._available:
+                self.btn_avvia.setEnabled(False)
+                self.btn_avvia.setText("In sviluppo")
+                return
             self.btn_avvia.setText("Avvia  →")
             if self.cartella and self.cartella.is_dir():
                 self._aggiorna_stato()
@@ -737,27 +788,38 @@ class ScriptCard(QFrame):
 class RawFilesWidget(QFrame):
     _ESCLUDI = {".DS_Store", "Thumbs.db", "desktop.ini"}
 
-    def __init__(self, cartella: Path, parent=None):
+    def __init__(self, cartella: Path, on_folder_changed=None, parent=None):
         super().__init__(parent)
         self.cartella = Path(cartella)
+        self.on_folder_changed = on_folder_changed
         self.setStyleSheet(f"RawFilesWidget {{ background:{C_PANEL}; border-radius:14px; border:1px solid {C_BORDER}; }}")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(190)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 18, 20, 18)
-        outer.setSpacing(10)
+        outer.setContentsMargins(22, 20, 22, 20)
+        outer.setSpacing(11)
 
         header_row = QHBoxLayout()
         icona = QLabel("📁")
-        icona.setStyleSheet(f"font-size:22px; color:{C_RED}; background:transparent; border:none;")
+        icona.setStyleSheet(f"font-size:27px; color:{C_RED}; background:transparent; border:none;")
         header_row.addWidget(icona)
         lbl_titolo = QLabel("Raw Files")
-        lbl_titolo.setStyleSheet(f"font-size:15px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
+        lbl_titolo.setStyleSheet(f"font-size:17px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
         header_row.addWidget(lbl_titolo)
         header_row.addStretch()
         self.lbl_count = QLabel("0 file")
         self.lbl_count.setStyleSheet(f"background:{C_RED}; color:white; border-radius:10px; font-size:12px; font-weight:bold; padding:2px 10px; border:none;")
         header_row.addWidget(self.lbl_count)
+        btn_cartella = QPushButton("Cambia cartella")
+        btn_cartella.setCursor(Qt.PointingHandCursor)
+        btn_cartella.setStyleSheet(f"""
+            QPushButton {{ background:{C_FASTWEB}; color:#111827; border:none; border-radius:7px;
+                           font-size:13px; font-weight:bold; padding:6px 14px; }}
+            QPushButton:hover {{ background:{C_FASTWEB_HOVER}; }}
+        """)
+        btn_cartella.clicked.connect(self._scegli_cartella)
+        header_row.addWidget(btn_cartella)
         btn_carica = QPushButton("+ Carica file")
         btn_carica.setStyleSheet(f"""
             QPushButton {{ background:{C_RED}; color:white; border:none; border-radius:7px; font-size:13px; font-weight:bold; padding:6px 14px; }}
@@ -767,6 +829,12 @@ class RawFilesWidget(QFrame):
         btn_carica.clicked.connect(self._carica_file)
         header_row.addWidget(btn_carica)
         outer.addLayout(header_row)
+
+        self.lbl_percorso = QLabel()
+        self.lbl_percorso.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_percorso.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:11px; padding:0 2px;")
+        self.lbl_percorso.setToolTip(str(self.cartella))
+        outer.addWidget(self.lbl_percorso)
 
         sep = QFrame()
         sep.setFixedHeight(1)
@@ -793,8 +861,19 @@ class RawFilesWidget(QFrame):
         self.setAcceptDrops(True)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._aggiorna_lista)
-        self._timer.start(1000)
+        self._timer.start(3000)
         self._aggiorna_lista()
+
+    def _scegli_cartella(self):
+        scelta = QFileDialog.getExistingDirectory(
+            self, "Scegli la cartella RAW_FILES", str(self.cartella.parent))
+        if not scelta:
+            return
+        self.cartella = Path(scelta)
+        self.lbl_percorso.setToolTip(str(self.cartella))
+        self._aggiorna_lista(force=True)
+        if self.on_folder_changed:
+            self.on_folder_changed(self.cartella)
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
@@ -817,15 +896,16 @@ class RawFilesWidget(QFrame):
             key=lambda f: f.name.lower()
         )
 
-    def _aggiorna_lista(self):
+    def _aggiorna_lista(self, force=False):
         files = self._leggi_files()
+        self.lbl_percorso.setText(f"Cartella attiva:  {self.cartella}")
         self.lbl_count.setText(f"{len(files)} file" if len(files) != 1 else "1 file")
         nomi_attuali = {
             self.lista_layout.itemAt(i).widget().property("nome_file")
             for i in range(self.lista_layout.count())
             if self.lista_layout.itemAt(i).widget()
         }
-        if nomi_attuali == {f.name for f in files}: return
+        if not force and nomi_attuali == {f.name for f in files}: return
         while self.lista_layout.count():
             item = self.lista_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
@@ -904,15 +984,15 @@ def crea_section_label(testo):
     frame = QFrame()
     frame.setStyleSheet("background:transparent; border:none;")
     lay = QHBoxLayout(frame)
-    lay.setContentsMargins(8, 18, 8, 10)
+    lay.setContentsMargins(2, 16, 2, 9)
     lay.setSpacing(0)
     bar = QFrame()
     bar.setFixedSize(4, 20)
-    bar.setStyleSheet(f"background:{C_RED}; border:none; border-radius:2px;")
+    bar.setStyleSheet(f"background:{C_FASTWEB}; border:none; border-radius:2px;")
     lay.addWidget(bar)
     lay.addSpacing(10)
     lbl = QLabel(testo)
-    lbl.setStyleSheet(f"color:{C_TEXT_MID}; font-size:15px; font-weight:bold; background:transparent; border:none;")
+    lbl.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:16px; font-weight:bold; background:transparent; border:none;")
     lay.addWidget(lbl)
     lay.addStretch()
     return frame
@@ -926,27 +1006,23 @@ class NavButton(QFrame):
         super().__init__(parent)
         self.comando = comando
         self.attivo  = attivo
-        bg     = C_RED_LIGHT if attivo else "transparent"
-        border = f"border:2px solid {C_RED}; border-radius:10px;" if attivo else "border:none; border-radius:10px;"
+        bg     = C_FASTWEB_LIGHT if attivo else "transparent"
+        border = "border:none; border-radius:8px;"
         self.setStyleSheet(f"QFrame {{ background:{bg}; {border} }}")
         self.setCursor(Qt.PointingHandCursor)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         header = QFrame()
-        header.setStyleSheet("background:transparent; border:none;")
+        header_bg = C_FASTWEB if attivo else "transparent"
+        header.setStyleSheet(f"background:{header_bg}; border:none; border-radius:8px;")
         h_lay = QHBoxLayout(header)
-        h_lay.setContentsMargins(8, 6, 8, 6)
+        h_lay.setContentsMargins(12, 8, 12, 8)
         h_lay.setSpacing(0)
-        if attivo:
-            linea = QFrame()
-            linea.setFixedSize(4, 20)
-            linea.setStyleSheet(f"background:{C_RED}; border:none;")
-            h_lay.addWidget(linea)
-        fg   = C_RED if attivo else C_TEXT_MID
+        fg   = "#111827" if attivo else "#C7CDD7"
         peso = "bold" if attivo else "normal"
         lbl  = QLabel(f"  {icona}  {testo}")
-        lbl.setStyleSheet(f"color:{fg}; font-size:17px; font-weight:{peso}; background:transparent; border:none;")
+        lbl.setStyleSheet(f"color:{fg}; font-size:16px; font-weight:{peso}; background:transparent; border:none;")
         lbl.setCursor(Qt.PointingHandCursor)
         h_lay.addWidget(lbl)
         h_lay.addStretch()
@@ -955,30 +1031,31 @@ class NavButton(QFrame):
             content = QFrame()
             content.setStyleSheet("background:transparent; border:none;")
             c_lay = QVBoxLayout(content)
-            c_lay.setContentsMargins(12, 0, 12, 6)
-            c_lay.setSpacing(2)
+            c_lay.setContentsMargins(14, 2, 14, 10)
+            c_lay.setSpacing(4)
             linea_sep = QFrame()
             linea_sep.setFixedHeight(1)
-            linea_sep.setStyleSheet(f"background:{C_RED}; border:none;")
+            linea_sep.setStyleSheet(f"background:{C_FASTWEB_HOVER}; border:none;")
             c_lay.addWidget(linea_sep)
             for sezione, voci in sottovoci:
                 s_frame = QFrame()
                 s_frame.setStyleSheet("background:transparent; border:none;")
                 s_lay = QHBoxLayout(s_frame)
-                s_lay.setContentsMargins(2, 4, 0, 2)
-                s_lay.setSpacing(6)
+                s_lay.setContentsMargins(2, 7, 0, 3)
+                s_lay.setSpacing(8)
                 bar = QFrame()
                 bar.setFixedSize(3, 14)
-                bar.setStyleSheet(f"background:{C_RED}; border:none;")
+                bar.setStyleSheet(f"background:{C_FASTWEB}; border:none;")
                 s_lay.addWidget(bar)
                 lbl_s = QLabel(sezione)
-                lbl_s.setStyleSheet(f"color:{C_RED}; font-size:15px; font-weight:bold; background:transparent; border:none;")
+                lbl_s.setStyleSheet("color:#111827; font-size:14px; font-weight:bold; background:transparent; border:none;")
                 s_lay.addWidget(lbl_s)
                 s_lay.addStretch()
                 c_lay.addWidget(s_frame)
                 for voce in voci:
                     v_lbl = QLabel(f"· {voce}")
-                    v_lbl.setStyleSheet(f"color:{C_TEXT_MID}; font-size:14px; padding-left:20px; background:transparent; border:none;")
+                    v_lbl.setStyleSheet("color:#374151; font-size:14px; padding:3px 0 3px 22px; background:transparent; border:none;")
+                    v_lbl.setWordWrap(True)
                     c_lay.addWidget(v_lbl)
             lay.addWidget(content)
         for w in self.findChildren(QWidget):
@@ -992,7 +1069,7 @@ class NavButton(QFrame):
 class Sidebar(QFrame):
     def __init__(self, pagina_attiva, nav_callback, sharepoint_root: Path, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(300)
+        self.setFixedWidth(280)
         self.setStyleSheet(f"QFrame {{ background:{C_SIDEBAR}; border:none; }}")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -1000,13 +1077,13 @@ class Sidebar(QFrame):
 
         barra = QFrame()
         barra.setFixedHeight(5)
-        barra.setStyleSheet(f"background:{C_RED}; border:none;")
+        barra.setStyleSheet(f"background:{C_FASTWEB}; border:none;")
         lay.addWidget(barra)
 
         logo_frame = QFrame()
         logo_frame.setStyleSheet("background:transparent; border:none;")
         logo_lay = QHBoxLayout(logo_frame)
-        logo_lay.setContentsMargins(30, 35, 30, 10)
+        logo_lay.setContentsMargins(24, 25, 24, 18)
         logo_lay.setSpacing(0)
         if ICON_PATH.exists():
             px_logo = QPixmap(str(ICON_PATH)).scaled(28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -1019,33 +1096,33 @@ class Sidebar(QFrame):
             lbl_dot.setStyleSheet(f"color:{C_RED}; font-size:28px; font-weight:bold; background:transparent;")
             logo_lay.addWidget(lbl_dot)
         lbl_title = QLabel(" INDICE")
-        lbl_title.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:22px; font-weight:bold; background:transparent;")
+        lbl_title.setStyleSheet("color:#FFFFFF; font-size:20px; font-weight:bold; background:transparent;")
         logo_lay.addWidget(lbl_title)
         logo_lay.addStretch()
         lay.addWidget(logo_frame)
 
         sep = QFrame()
         sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background:{C_BORDER}; border:none; margin-left:20px; margin-right:20px;")
+        sep.setStyleSheet("background:#273244; border:none; margin-left:20px; margin-right:20px;")
         lay.addWidget(sep)
         lay.addSpacing(10)
 
         lbl_nav = QLabel("NAVIGAZIONE")
-        lbl_nav.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:11px; background:transparent; border:none;")
+        lbl_nav.setStyleSheet("color:#7F8999; font-size:10px; font-weight:bold; background:transparent; border:none;")
         lbl_nav.setContentsMargins(28, 0, 0, 8)
         lay.addWidget(lbl_nav)
 
         home_sottovoci        = [] if pagina_attiva == "main" else None
         giornalieri_sottovoci = [
             ("Business",          ["Estrai file gara", "FCST", "Appuntamenti"]),
-            ("Consumer / Negozi", ["Report pedonalità", "Cruscotto Tracciamento", "Cruscotto Giornaliero"]),
+            ("Consumer / Negozi", ["Formatta pedonalità", "Cruscotto Tracciamento", "Cruscotto Giornaliero"]),
         ] if pagina_attiva == "giornalieri" else None
         campagne_sottovoci    = [
             ("Campagne", ["Divisione per aente", "Riaggrega file Campagne", "Presa in carico cliente", "Report Campagne(⚒️)"]),
         ] if pagina_attiva == "campagne" else None
         altro_sottovoci       = [
             ("Business", ["Formatta file Gara", "Formatta file appuntamenti", "Formatta file opportunità", "Chiusura gara"]),
-            ("Formattazione file negozi", ["Formatta pedonalità", "Formatta magazzino", "Formatta performance(⚒️)"])
+            ("File negozi", ["Report pedonalità", "Formatta magazzino", "Formatta performance(⚒️)"])
         ] if pagina_attiva == "altri script" else None
 
         nav_items = [
@@ -1060,7 +1137,7 @@ class Sidebar(QFrame):
             frame = QFrame()
             frame.setStyleSheet("background:transparent; border:none;")
             f_lay = QVBoxLayout(frame)
-            f_lay.setContentsMargins(16, 2, 16, 2)
+            f_lay.setContentsMargins(14, 2, 14, 2)
             f_lay.addWidget(btn)
             lay.addWidget(frame)
 
@@ -1075,24 +1152,24 @@ class Sidebar(QFrame):
 
         sep2 = QFrame()
         sep2.setFixedHeight(1)
-        sep2.setStyleSheet(f"background:{C_BORDER};")
+        sep2.setStyleSheet("background:#273244;")
         b_lay.addWidget(sep2)
 
         # Path SharePoint corrente
         lbl_sp = QLabel("📂  SharePoint:")
-        lbl_sp.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:11px; background:transparent; border:none;")
+        lbl_sp.setStyleSheet("color:#7F8999; font-size:10px; background:transparent; border:none;")
         b_lay.addWidget(lbl_sp)
 
         lbl_sp_path = QLabel(str(sharepoint_root))
-        lbl_sp_path.setStyleSheet(f"color:{C_TEXT_MID}; font-size:11px; background:transparent; border:none;")
+        lbl_sp_path.setStyleSheet("color:#B5BDC9; font-size:10px; background:transparent; border:none;")
         lbl_sp_path.setWordWrap(True)
         b_lay.addWidget(lbl_sp_path)
 
         btn_cambia = QPushButton("🔧  Cambia cartella SharePoint")
         btn_cambia.setStyleSheet(f"""
-            QPushButton {{ background:transparent; color:{C_RED}; border:1px solid {C_RED};
+            QPushButton {{ background:#1F2937; color:#E5E7EB; border:1px solid #374151;
                 border-radius:8px; font-size:13px; padding:6px; text-align:left; }}
-            QPushButton:hover {{ background:#FFEBEB; }}
+            QPushButton:hover {{ background:#293548; color:white; }}
         """)
         btn_cambia.clicked.connect(nav_callback.__self__._cambia_sharepoint
                                    if hasattr(nav_callback, '__self__') else lambda: None)
@@ -1104,14 +1181,14 @@ class Sidebar(QFrame):
 
         sep3 = QFrame()
         sep3.setFixedHeight(1)
-        sep3.setStyleSheet(f"background:{C_BORDER};")
+        sep3.setStyleSheet("background:#273244;")
         b_lay.addWidget(sep3)
 
         btn_esci = QPushButton("Esci")
         btn_esci.setStyleSheet(f"""
-            QPushButton {{ background:transparent; color:{C_RED}; border:none; border-radius:8px;
-                font-size:20px; padding:8px; text-align:left; }}
-            QPushButton:hover {{ background:#FFEBEB; }}
+            QPushButton {{ background:transparent; color:#C7CDD7; border:none; border-radius:8px;
+                font-size:14px; padding:8px; text-align:left; }}
+            QPushButton:hover {{ background:#1F2937; color:white; }}
         """)
         btn_esci.clicked.connect(QApplication.quit)
         b_lay.addWidget(btn_esci)
@@ -1124,36 +1201,36 @@ class Sidebar(QFrame):
 class GlobalHeader(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(100)
+        self.setFixedHeight(88)
         self.setStyleSheet(f"background:{C_BG}; border:none;")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(25, 5, 25, 5)
+        lay.setContentsMargins(30, 8, 30, 8)
         left = QFrame()
         left.setStyleSheet("background:transparent; border:none;")
         l_lay = QVBoxLayout(left)
         l_lay.setContentsMargins(0, 0, 0, 0)
         l_lay.setSpacing(1)
         self.lbl_breadcrumb  = QLabel("Home")
-        self.lbl_breadcrumb.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:14px;")
+        self.lbl_breadcrumb.setStyleSheet(f"color:{C_RED}; font-size:11px; font-weight:bold;")
         self.lbl_titolo      = QLabel("MyWay Tools")
-        self.lbl_titolo.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:30px; font-weight:bold;")
+        self.lbl_titolo.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:28px; font-weight:bold;")
         self.lbl_sottotitolo = QLabel("")
-        self.lbl_sottotitolo.setStyleSheet(f"color:{C_TEXT_MID}; font-size:16px;")
+        self.lbl_sottotitolo.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:14px;")
         l_lay.addWidget(self.lbl_breadcrumb)
         l_lay.addWidget(self.lbl_titolo)
         l_lay.addWidget(self.lbl_sottotitolo)
         lay.addWidget(left)
         lay.addStretch()
         self.lbl_orologio = QLabel("")
-        self.lbl_orologio.setStyleSheet("color:#000000; font-size:18px;")
+        self.lbl_orologio.setStyleSheet(f"color:{C_TEXT_MID}; font-size:13px;")
         lay.addWidget(self.lbl_orologio, alignment=Qt.AlignRight | Qt.AlignVCenter)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._aggiorna_orologio)
-        self._timer.start(1000)
+        self._timer.start(30000)
         self._aggiorna_orologio()
 
     def _aggiorna_orologio(self):
-        self.lbl_orologio.setText(datetime.now().strftime("📅 %d %b %Y   🕒 %H:%M:%S"))
+        self.lbl_orologio.setText(datetime.now().strftime("%d %b %Y  ·  %H:%M"))
 
     def aggiorna(self, breadcrumb, titolo, sottotitolo):
         self.lbl_breadcrumb.setText(breadcrumb)
@@ -1177,21 +1254,21 @@ class PaginaHome(QWidget):
         inner = QWidget()
         inner.setStyleSheet(f"background:{C_BG};")
         lay = QVBoxLayout(inner)
-        lay.setContentsMargins(50, 50, 50, 30)
+        lay.setContentsMargins(34, 28, 34, 28)
         lay.setSpacing(0)
-        lbl_welcome = QLabel("Bentornato 👋")
-        lbl_welcome.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:14px;")
+        lbl_welcome = QLabel("ACCESSO RAPIDO")
+        lbl_welcome.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:11px; font-weight:bold;")
         lay.addWidget(lbl_welcome)
         linea_red = QFrame()
         linea_red.setFixedSize(60, 3)
         linea_red.setStyleSheet(f"background:{C_RED}; border-radius:2px;")
         lay.addWidget(linea_red)
-        lay.addSpacing(30)
+        lay.addSpacing(20)
         cards_frame = QFrame()
         cards_frame.setStyleSheet("background:transparent; border:none;")
         c_lay = QHBoxLayout(cards_frame)
         c_lay.setContentsMargins(0, 0, 0, 0)
-        c_lay.setSpacing(28)
+        c_lay.setSpacing(18)
         c_lay.addWidget(self._big_card("◈", "Giornalieri",
             "Seszione in cui puoi trovare tutti gli script utili per le operazioni quitidiane.\nPuoi trovare sia script inerenti a lato BUSINESS sia a lato CONSUMER",
             "Operatività quotidiana", "giornalieri", nav_callback))
@@ -1199,8 +1276,8 @@ class PaginaHome(QWidget):
             "Divisione campagne per agente, avanzamento, report e statistiche complete.",
             "Gestione campagne", "campagne", nav_callback))
         lay.addWidget(cards_frame)
-        lay.addSpacing(28)
-        lay.addWidget(crea_section_label("Raw Files · Cartella di input"))
+        lay.addSpacing(18)
+        lay.addWidget(crea_section_label("Raw files · Input operativo"))
         lay.addSpacing(6)
         self.raw_files_widget = RawFilesWidget(paths["RAW_FILES"])
         lay.addWidget(self.raw_files_widget)
@@ -1211,27 +1288,27 @@ class PaginaHome(QWidget):
     def _big_card(self, icona, titolo, desc, tag, pagina, nav_callback):
         card = QFrame()
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        card.setMinimumHeight(280)
-        card.setStyleSheet(f"QFrame {{ background:{C_PANEL}; border-radius:20px; border:1px solid {C_BORDER}; }}")
+        card.setMinimumHeight(250)
+        card.setStyleSheet(f"QFrame {{ background:{C_PANEL}; border-radius:14px; border:1px solid {C_BORDER}; }}")
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(30, 30, 30, 30)
+        lay.setContentsMargins(26, 24, 26, 24)
         lay.setSpacing(0)
         lbl_tag = QLabel(f"  {tag}  ")
-        lbl_tag.setStyleSheet(f"background:{C_RED_LIGHT}; color:{C_RED}; border-radius:6px; font-size:11px; font-weight:bold; padding:2px 8px; border:none;")
+        lbl_tag.setStyleSheet(f"background:{C_FASTWEB}; color:#111827; border-radius:6px; font-size:11px; font-weight:bold; padding:2px 8px; border:none;")
         lbl_tag.setFixedHeight(24)
         lbl_tag.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         lay.addWidget(lbl_tag)
         lay.addSpacing(14)
         lbl_icona = QLabel(icona)
-        lbl_icona.setStyleSheet(f"font-size:44px; color:{C_RED}; background:transparent; border:none;")
+        lbl_icona.setStyleSheet(f"font-size:32px; color:{C_RED}; background:transparent; border:none;")
         lay.addWidget(lbl_icona)
         lay.addSpacing(4)
         lbl_titolo = QLabel(titolo)
-        lbl_titolo.setStyleSheet(f"font-size:22px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
+        lbl_titolo.setStyleSheet(f"font-size:20px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
         lay.addWidget(lbl_titolo)
         lay.addSpacing(6)
         lbl_desc = QLabel(desc)
-        lbl_desc.setStyleSheet(f"font-size:13px; color:{C_TEXT_MID}; background:transparent; border:none;")
+        lbl_desc.setStyleSheet(f"font-size:14px; color:{C_TEXT_MID}; background:transparent; border:none;")
         lbl_desc.setWordWrap(True)
         lay.addWidget(lbl_desc)
         lay.addSpacing(20)
@@ -1258,7 +1335,7 @@ class PaginaGiornalieri(QWidget):
         inner = QWidget()
         inner.setStyleSheet(f"background:{C_BG};")
         grid = QGridLayout(inner)
-        grid.setContentsMargins(38, 20, 38, 20)
+        grid.setContentsMargins(30, 14, 30, 24)
         grid.setHorizontalSpacing(0)
         grid.setVerticalSpacing(0)
         for col in range(12): grid.setColumnStretch(col, 1)
@@ -1286,9 +1363,10 @@ class PaginaGiornalieri(QWidget):
         row += 1
         grid.addWidget(crea_section_label("Consumer / Negozi"), row, 0, 1, 12); row += 1
         cards_consumer = [
-            {"icona": "📊", "titolo": "1. Report Pedonalità",
-             "desc": "Creazione report per analisi flussi di pedonalità nei punti vendita.",
-             "script": paths["REPORT_PEDONALITA"]},
+            {"icona": "🗂️", "titolo": "1. Formatta pedonalità",
+             "desc": "Formatta e prepara il file pedonalità per le elaborazioni giornaliere.",
+             "script": paths["FORMATTA_PEDONALITA"],
+             "cartella": paths["RAW_FILES"], "nome_file": "Giorgio Mandelli*.xlsx"},
             {"icona": "📊", "titolo": "2. Cruscotto Tracciamento",
              "desc": "Report aggregato per Giorgio che riunisce Business, trattative Energia e vendite Gadget con eventuale cross selling, per monitorare l'esercizio dei negozi.",
              "script": paths["CRUSCOTTO_TRACCIAMENTO"]},
@@ -1299,7 +1377,8 @@ class PaginaGiornalieri(QWidget):
         grid.setRowMinimumHeight(row, CARD_HEIGHT + 16)
         for i, cfg in enumerate(cards_consumer):
             card = ScriptCard(cfg["icona"], cfg["titolo"], cfg["desc"], cfg["script"], terminale,
-                              cartella=cfg.get("cartella"), nomi_file=cfg.get("nomi_file"))
+                              cartella=cfg.get("cartella"), nome_file=cfg.get("nome_file"),
+                              nomi_file=cfg.get("nomi_file"))
             wrapper = QWidget(); wrapper.setStyleSheet("background:transparent;")
             w_lay = QVBoxLayout(wrapper); w_lay.setContentsMargins(0 if i == 0 else 8, 0, 0 if i == len(cards_consumer)-1 else 8, 0); w_lay.setSpacing(0)
             w_lay.addWidget(card, alignment=Qt.AlignTop)
@@ -1322,7 +1401,7 @@ class PaginaCampagne(QWidget):
         inner = QWidget()
         inner.setStyleSheet(f"background:{C_BG};")
         grid = QGridLayout(inner)
-        grid.setContentsMargins(38, 20, 38, 20)
+        grid.setContentsMargins(30, 14, 30, 24)
         grid.setHorizontalSpacing(0)
         grid.setVerticalSpacing(0)
         for col in range(12): grid.setColumnStretch(col, 1)
@@ -1367,7 +1446,7 @@ class PaginaAltriScript(QWidget):
         inner = QWidget()
         inner.setStyleSheet(f"background:{C_BG};")
         grid = QGridLayout(inner)
-        grid.setContentsMargins(38, 20, 38, 20)
+        grid.setContentsMargins(30, 14, 30, 24)
         grid.setHorizontalSpacing(0); grid.setVerticalSpacing(0)
         for col in range(12): grid.setColumnStretch(col, 1)
         row = 0
@@ -1400,9 +1479,9 @@ class PaginaAltriScript(QWidget):
         row += 1
           
         #SEZIONE FILE NEGOZI
-        grid.addWidget(crea_section_label("Formattazione file negozi"), row, 0, 1, 12); row += 1
+        grid.addWidget(crea_section_label("Strumenti file negozi"), row, 0, 1, 12); row += 1
         cards_consumer = [
-            ("🗂️", "1. Formatta pedonalità",  "Formatta e prepara file pedonalità",            paths["FORMATTA_PEDONALITA"], paths["RAW_FILES"], "Giorgio Mandelli*.xlsx"),
+            ("📊", "1. Report pedonalità",    "Crea il report di analisi dei flussi di pedonalità", paths["REPORT_PEDONALITA"], None, None),
             ("🏬", "2. Formatta magazzino",    "Formatta file magazzino e classifica articoli", paths["FORMATTA_MAGAZZINO"],   paths["RAW_FILES"], "VALORE_DEL_MAGAZZINO*.csv"),
             ("📊", "3(⚒️). Formatta performance",  "Formatta file performances",                    "",                           paths["RAW_FILES"], ""),
         ]
@@ -1444,7 +1523,7 @@ class MainWindow(QMainWindow):
         main_lay.setSpacing(0)
 
         self.sidebar_stack = QStackedWidget()
-        self.sidebar_stack.setFixedWidth(300)
+        self.sidebar_stack.setFixedWidth(280)
         self.sidebar_stack.setStyleSheet(f"background:{C_SIDEBAR}; border:none;")
         main_lay.addWidget(self.sidebar_stack)
 
@@ -1464,10 +1543,20 @@ class MainWindow(QMainWindow):
 
         self.content_stack = QStackedWidget()
         self.content_stack.setStyleSheet(f"background:{C_BG};")
-        r_lay.addWidget(self.content_stack, stretch=1)
-
         self.terminale = TerminaleWidget()
-        r_lay.addWidget(self.terminale)
+        self.workspace_splitter = QSplitter(Qt.Vertical)
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.setHandleWidth(5)
+        self.workspace_splitter.setStyleSheet("""
+            QSplitter::handle { background:#DCE1E8; }
+            QSplitter::handle:hover { background:#E30613; }
+        """)
+        self.workspace_splitter.addWidget(self.content_stack)
+        self.workspace_splitter.addWidget(self.terminale)
+        self.workspace_splitter.setStretchFactor(0, 1)
+        self.workspace_splitter.setStretchFactor(1, 0)
+        self.workspace_splitter.setSizes([700, 190])
+        r_lay.addWidget(self.workspace_splitter, stretch=1)
         main_lay.addWidget(right, stretch=1)
 
         self._build_all()
@@ -1527,6 +1616,882 @@ class MainWindow(QMainWindow):
 
 
 # ─────────────────────────────────────────────────────────────
+# INTERFACCIA OPERATIVA 2.0
+# ─────────────────────────────────────────────────────────────
+class WorkspaceNavButton(QPushButton):
+    def __init__(self, icon, text, page, callback, parent=None):
+        super().__init__(f"{icon}   {text}", parent)
+        self.page = page
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(46)
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background:transparent; color:#CBD1DB; border:none;
+                border-radius:9px; padding:0 16px; text-align:left;
+                font-size:15px; font-weight:bold;
+            }}
+            QPushButton:hover {{ background:#202C3D; color:white; }}
+            QPushButton:checked {{ background:{C_FASTWEB}; color:#111827; }}
+        """)
+        self.clicked.connect(lambda checked=False: callback(page))
+
+
+class WorkspaceSidebar(QFrame):
+    def __init__(self, callback, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(250)
+        self.setStyleSheet(f"background:{C_SIDEBAR}; border:none;")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 0, 16, 18)
+        layout.setSpacing(6)
+
+        brand = QFrame()
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(8, 24, 8, 24)
+        if ICON_PATH.exists():
+            icon = QLabel()
+            icon.setPixmap(QPixmap(str(ICON_PATH)).scaled(
+                34, 34, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            brand_layout.addWidget(icon)
+        title_box = QVBoxLayout()
+        title = QLabel("MYWAY")
+        title.setStyleSheet("color:white; font-size:18px; font-weight:bold;")
+        subtitle = QLabel("OPERATIONS HUB")
+        subtitle.setStyleSheet(f"color:{C_FASTWEB}; font-size:10px; font-weight:bold;")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        brand_layout.addLayout(title_box)
+        brand_layout.addStretch()
+        layout.addWidget(brand)
+
+        label = QLabel("  AREA DI LAVORO")
+        label.setStyleSheet("color:#778295; font-size:10px; font-weight:bold; padding:8px 0;")
+        layout.addWidget(label)
+
+        self.buttons = {}
+        for icon, text, page in (
+            ("⌂", "Panoramica", "dashboard"),
+            ("▶", "Giornalieri", "operations"),
+            ("◆", "Campagne", "campaigns"),
+            ("✦", "Utilità", "tools"),
+        ):
+            button = WorkspaceNavButton(icon, text, page, callback)
+            self.buttons[page] = button
+            layout.addWidget(button)
+
+        layout.addStretch()
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet("background:#293548;")
+        layout.addWidget(line)
+        info = QLabel("FASTWEB + VODAFONE\nAutomazioni operative")
+        info.setStyleSheet("color:#8E98A8; font-size:11px; padding:10px 8px;")
+        layout.addWidget(info)
+        exit_button = QPushButton("Esci")
+        exit_button.setCursor(Qt.PointingHandCursor)
+        exit_button.setFixedHeight(38)
+        exit_button.setStyleSheet("""
+            QPushButton { color:#CBD1DB; background:transparent; border:none;
+                          border-radius:8px; text-align:left; padding-left:10px; font-size:13px; }
+            QPushButton:hover { color:white; background:#202C3D; }
+        """)
+        exit_button.clicked.connect(QApplication.quit)
+        layout.addWidget(exit_button)
+
+    def select(self, page):
+        for name, button in self.buttons.items():
+            button.setChecked(name == page)
+
+
+class WorkspaceHeader(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(92)
+        self.setStyleSheet(f"background:{C_PANEL}; border:none;")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(32, 14, 32, 12)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        self.eyebrow = QLabel("PANORAMICA")
+        self.eyebrow.setStyleSheet(f"color:{C_RED}; font-size:10px; font-weight:bold;")
+        self.title = QLabel("Centro operativo")
+        self.title.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:27px; font-weight:bold;")
+        self.subtitle = QLabel("Tutto ciò che serve, senza passaggi superflui.")
+        self.subtitle.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:13px;")
+        text.addWidget(self.eyebrow)
+        text.addWidget(self.title)
+        text.addWidget(self.subtitle)
+        layout.addLayout(text)
+        layout.addStretch()
+        self.clock = QLabel()
+        self.clock.setStyleSheet(f"color:{C_TEXT_MID}; font-size:13px; font-weight:bold;")
+        layout.addWidget(self.clock)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_clock)
+        self.timer.start(30000)
+        self.update_clock()
+
+    def update_clock(self):
+        self.clock.setText(datetime.now().strftime("%d %b %Y  ·  %H:%M"))
+
+    def set_page(self, eyebrow, title, subtitle):
+        self.eyebrow.setText(eyebrow.upper())
+        self.title.setText(title)
+        self.subtitle.setText(subtitle)
+
+
+class WorkflowRow(QFrame):
+    def __init__(self, number, title, description, script, terminal,
+                 category="", folder=None, filename=None, parent=None):
+        super().__init__(parent)
+        self.script = Path(script) if script else None
+        self.terminal = terminal
+        self.folder = Path(folder) if folder else None
+        self.filename = filename
+        self.running = False
+        self.available = bool(self.script and self.script.is_file())
+        self.setFixedHeight(98)
+        self.setStyleSheet(f"""
+            WorkflowRow {{ background:{C_PANEL}; border:1px solid {C_BORDER}; border-radius:11px; }}
+            WorkflowRow:hover {{ border:1px solid #C7CDD6; }}
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(14)
+        index = QLabel(str(number).zfill(2))
+        index.setAlignment(Qt.AlignCenter)
+        index.setFixedSize(44, 44)
+        index.setStyleSheet(f"background:{C_FASTWEB}; color:#111827; border-radius:9px; font-size:15px; font-weight:bold;")
+        layout.addWidget(index)
+
+        copy = QVBoxLayout()
+        copy.setSpacing(3)
+        top = QHBoxLayout()
+        name = QLabel(title)
+        name.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:16px; font-weight:bold;")
+        top.addWidget(name)
+        if category:
+            tag = QLabel(category.upper())
+            tag.setStyleSheet(f"background:{C_FASTWEB_LIGHT}; color:#665700; border-radius:5px; padding:2px 7px; font-size:9px; font-weight:bold;")
+            tag.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            top.addWidget(tag)
+        top.addStretch()
+        copy.addLayout(top)
+        detail = QLabel(description)
+        detail.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:13px;")
+        detail.setWordWrap(True)
+        copy.addWidget(detail)
+        self.status = QLabel()
+        self.status.setStyleSheet(f"color:{C_TEXT_MID}; font-size:11px;")
+        copy.addWidget(self.status)
+        layout.addLayout(copy, stretch=1)
+
+        self.run_button = QPushButton("Avvia")
+        self.run_button.setCursor(Qt.PointingHandCursor)
+        self.run_button.setFixedSize(112, 38)
+        self.run_button.setStyleSheet(f"""
+            QPushButton {{ background:{C_RED}; color:white; border:none; border-radius:8px;
+                           font-size:13px; font-weight:bold; }}
+            QPushButton:hover {{ background:{C_RED_HOVER}; }}
+            QPushButton:disabled {{ background:#D4D8DE; color:#7B8494; }}
+        """)
+        self.run_button.clicked.connect(self.run)
+        layout.addWidget(self.run_button)
+
+        self.signals = ScriptCardSignals()
+        self.signals.script_finished.connect(self.finished)
+        global_signals.script_avviato.connect(self.lock)
+        global_signals.script_terminato.connect(self.unlock)
+        self.refresh_status()
+
+    def refresh_status(self):
+        if not self.available:
+            self.status.setText("Funzione in sviluppo")
+            self.run_button.setText("Non disponibile")
+            self.run_button.setFixedWidth(126)
+            self.run_button.setEnabled(False)
+            return
+        if self.folder and self.filename:
+            found, match = check_file_per_nome(self.folder, self.filename)
+            self.status.setText(f"Pronto · {match}" if found else f"In attesa di {self.filename}")
+            self.status.setStyleSheet(
+                f"color:{C_LOG_OK if found else C_LOG_WARN}; font-size:11px; font-weight:bold;")
+            self.run_button.setEnabled(found)
+        else:
+            self.status.setText("Pronto per l'esecuzione")
+            self.run_button.setEnabled(True)
+
+    def run(self):
+        if not self.available or self.running:
+            return
+        self.running = True
+        self.run_button.setText("In esecuzione")
+        global_signals.script_avviato.emit()
+        lancia_script(self.script, self.terminal, self.signals.script_finished.emit)
+
+    def finished(self, success):
+        self.running = False
+        self.status.setText("Completato correttamente" if success else "Terminato con errore")
+        self.status.setStyleSheet(
+            f"color:{C_LOG_OK if success else C_LOG_ERR}; font-size:11px; font-weight:bold;")
+        global_signals.script_terminato.emit()
+
+    def lock(self):
+        if not self.running:
+            self.run_button.setEnabled(False)
+
+    def unlock(self):
+        if not self.running:
+            self.run_button.setText("Avvia" if self.available else "Non disponibile")
+            self.refresh_status()
+
+
+class ScriptLaunchDialog(QDialog):
+    def __init__(self, tile, parent=None):
+        super().__init__(parent)
+        self.tile = tile
+        self.setWindowTitle(tile.title)
+        self.setModal(True)
+        self.setFixedWidth(520)
+        self.setStyleSheet(f"background:{C_PANEL};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(26, 24, 26, 22)
+        layout.setSpacing(12)
+
+        top = QHBoxLayout()
+        badge = QLabel(str(tile.number).zfill(2))
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setFixedSize(42, 34)
+        badge.setStyleSheet(f"background:{C_FASTWEB}; color:#111827; border-radius:7px; font-weight:bold;")
+        top.addWidget(badge)
+        category = QLabel(tile.category.upper())
+        category.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:11px; font-weight:bold;")
+        top.addWidget(category)
+        top.addStretch()
+        layout.addLayout(top)
+
+        title = QLabel(tile.title)
+        title.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:23px; font-weight:bold;")
+        layout.addWidget(title)
+        description = QLabel(tile.description)
+        description.setWordWrap(True)
+        description.setStyleSheet(f"color:{C_TEXT_MID}; font-size:14px;")
+        layout.addWidget(description)
+
+        if tile.instructions:
+            instructions_title = QLabel("COME RECUPERARE IL FILE")
+            instructions_title.setStyleSheet(f"color:{C_RED}; font-size:10px; font-weight:bold;")
+            layout.addWidget(instructions_title)
+            instructions = QLabel(tile.instructions)
+            instructions.setWordWrap(True)
+            instructions.setStyleSheet(f"color:{C_TEXT_MID}; font-size:13px;")
+            layout.addWidget(instructions)
+
+        status_title = QLabel("CONTROLLO PRIMA DELL'AVVIO")
+        status_title.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:10px; font-weight:bold;")
+        layout.addWidget(status_title)
+        ready, message = tile.readiness()
+        if tile.remote_check:
+            ready = False
+            message = "Verifica della cartella SharePoint in corso..."
+        self.status = QLabel(message)
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet(
+            f"color:{C_LOG_INFO if tile.remote_check else (C_LOG_OK if ready else C_LOG_WARN)}; "
+            "font-size:13px; font-weight:bold;")
+        layout.addWidget(self.status)
+
+        self.add_file_button = None
+        if tile.available and tile.folder and tile.filename and not ready:
+            self.add_file_button = QPushButton("+ Aggiungi file alla cartella RAW")
+            self.add_file_button.setCursor(Qt.PointingHandCursor)
+            self.add_file_button.setFixedHeight(38)
+            self.add_file_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.add_file_button.setStyleSheet(f"""
+                QPushButton {{ background:{C_FASTWEB}; color:#111827; border:none; border-radius:7px;
+                               padding:0 15px; font-size:12px; font-weight:bold; }}
+                QPushButton:hover {{ background:{C_FASTWEB_HOVER}; }}
+            """)
+            self.add_file_button.clicked.connect(self._add_file)
+            layout.addWidget(self.add_file_button, alignment=Qt.AlignLeft)
+
+        self.remote_check_button = None
+        self.remote_check_signals = None
+        self._remote_check_running = False
+        if tile.remote_check:
+            self.remote_check_button = QPushButton("Riprova controllo")
+            self.remote_check_button.setCursor(Qt.PointingHandCursor)
+            self.remote_check_button.setFixedHeight(36)
+            self.remote_check_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.remote_check_button.setStyleSheet(f"""
+                QPushButton {{ background:{C_BG}; color:{C_TEXT_MID}; border:1px solid {C_BORDER};
+                               border-radius:7px; padding:0 14px; font-size:12px; font-weight:bold; }}
+                QPushButton:hover {{ border-color:{C_RED}; color:{C_RED}; }}
+                QPushButton:disabled {{ color:#9CA3AF; }}
+            """)
+            self.remote_check_button.clicked.connect(self._start_remote_check)
+            self.remote_check_button.hide()
+            layout.addWidget(self.remote_check_button, alignment=Qt.AlignLeft)
+
+        hint = QLabel("Dopo l'avvio puoi seguire tutte le fasi nel terminale in basso.")
+        hint.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:12px;")
+        layout.addWidget(hint)
+
+        actions = QHBoxLayout()
+        actions.addStretch()
+        cancel = QPushButton("Annulla")
+        cancel.setFixedHeight(38)
+        cancel.setStyleSheet(f"background:{C_BG}; color:{C_TEXT_MID}; border:1px solid {C_BORDER}; border-radius:8px; padding:0 16px;")
+        cancel.clicked.connect(self.reject)
+        actions.addWidget(cancel)
+        self.run_button = QPushButton("Avvia elaborazione")
+        self.run_button.setFixedHeight(38)
+        self.run_button.setStyleSheet(f"""
+            QPushButton {{ background:{C_RED}; color:white; border:none; border-radius:8px;
+                           padding:0 18px; font-size:13px; font-weight:bold; }}
+            QPushButton:hover {{ background:{C_RED_HOVER}; }}
+            QPushButton:disabled {{ background:#D4D8DE; color:#7B8494; }}
+        """)
+        self.run_button.setEnabled(ready)
+        self.run_button.clicked.connect(self._run)
+        actions.addWidget(self.run_button)
+        layout.addLayout(actions)
+
+        if tile.remote_check:
+            self.remote_check_signals = RemoteCheckSignals(self)
+            self.remote_check_signals.finished.connect(self._remote_check_finished)
+            QTimer.singleShot(0, self._start_remote_check)
+
+    def _start_remote_check(self):
+        if self._remote_check_running or self.tile.remote_check != "sharepoint_cb":
+            return
+        self._remote_check_running = True
+        self.run_button.setEnabled(False)
+        self.status.setText("Verifica della cartella SharePoint in corso...")
+        self.status.setStyleSheet(f"color:{C_LOG_INFO}; font-size:13px; font-weight:bold;")
+        if self.remote_check_button:
+            self.remote_check_button.hide()
+
+        def check_cb():
+            marker = "__MYWAY_CB_CHECK__"
+            bootstrap = r'''import json, sys
+from pathlib import Path
+scripts = Path(sys.argv[1])
+module = scripts / "BUSINESS" / "14_ELABORA_CB"
+sys.path[:0] = [str(module), str(scripts)]
+from cb_sharepoint import PATH_RAW_CB_REMOTO, _drive, _file_dati
+client, drive_id = _drive()
+files = [item for item in client.elenca_file_cartella(drive_id, PATH_RAW_CB_REMOTO) if _file_dati(item)]
+matches = [item for item in files if "cb" in str(item.get("name", "")).casefold()]
+matches.sort(key=lambda item: str(item.get("lastModifiedDateTime", "")), reverse=True)
+print("__MYWAY_CB_CHECK__" + json.dumps({"found": bool(matches), "name": str(matches[0].get("name", "")) if matches else ""}))'''
+            try:
+                completed = subprocess.run(
+                    [_trova_python(), "-u", "-c", bootstrap, str(SCRIPTS_DIR)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=40, creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                payload_line = next(
+                    (line for line in reversed(completed.stdout.splitlines()) if line.startswith(marker)),
+                    None,
+                )
+                if completed.returncode != 0 or not payload_line:
+                    raise RuntimeError("Controllo SharePoint non completato")
+                payload = json.loads(payload_line[len(marker):])
+                if payload.get("found"):
+                    result = (True, f"File CB trovato su SharePoint: {payload.get('name')}")
+                else:
+                    result = (False, "Nessun file contenente “CB” trovato in 00_DA_ELABORARE.")
+            except subprocess.TimeoutExpired:
+                result = (False, "Verifica SharePoint interrotta dopo 40 secondi. Riprova.")
+            except Exception:
+                result = (False, "Impossibile verificare SharePoint. Controlla la connessione e riprova.")
+            self.remote_check_signals.finished.emit(*result)
+
+        threading.Thread(target=check_cb, daemon=True).start()
+
+    def _remote_check_finished(self, ready, message):
+        self._remote_check_running = False
+        self.status.setText(message)
+        self.status.setStyleSheet(
+            f"color:{C_LOG_OK if ready else C_LOG_WARN}; font-size:13px; font-weight:bold;")
+        self.run_button.setEnabled(ready)
+        if self.remote_check_button:
+            self.remote_check_button.setVisible(not ready)
+
+    def _add_file(self):
+        selected, _ = QFileDialog.getOpenFileName(
+            self, "Scegli il file da aggiungere", str(Path.home()), "Tutti i file (*.*)")
+        if not selected:
+            return
+        source = Path(selected)
+        try:
+            self.tile.folder.mkdir(parents=True, exist_ok=True)
+            destination = self.tile.folder / source.name
+            if destination.exists():
+                answer = QMessageBox.question(
+                    self, "File già presente", f"Sovrascrivere «{source.name}»?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if answer != QMessageBox.Yes:
+                    return
+            shutil.copy2(source, destination)
+        except OSError as error:
+            QMessageBox.critical(self, "Errore copia", f"Impossibile aggiungere il file:\n{error}")
+            return
+        self.tile.refresh_status()
+        ready, message = self.tile.readiness()
+        self.status.setText(message)
+        self.status.setStyleSheet(
+            f"color:{C_LOG_OK if ready else C_LOG_WARN}; font-size:13px; font-weight:bold;")
+        self.run_button.setEnabled(ready)
+        if ready and self.add_file_button:
+            self.add_file_button.hide()
+
+    def _run(self):
+        self.accept()
+        global_signals.script_avviato.emit()
+        lancia_script(
+            self.tile.script, self.tile.terminal,
+            lambda success: global_signals.script_terminato.emit())
+
+
+def emoji_script(title):
+    """Restituisce un simbolo immediato e coerente con lo scopo dello script."""
+    text = title.casefold()
+    rules = (
+        ("chiusura gara", "🔒"), ("giacenze", "📱"),
+        ("magazzino", "📦"), ("pedonalità", "👣"),
+        ("forecast", "📈"), ("appuntamenti", "📅"),
+        ("opportunità", "🎯"), ("divisione", "👥"),
+        ("riaggrega", "🗃️"), ("presa in carico", "💼"),
+        ("campagne", "📣"), ("cruscotto", "📊"),
+        ("elabora cb", "🧾"), ("gara", "🗂️"),
+    )
+    return next((icon for keyword, icon in rules if keyword in text), "⚙️")
+
+
+class ScriptTile(QFrame):
+    def __init__(self, number, title, description, script, terminal,
+                 category="", folder=None, filename=None, instructions="", remote_check=None,
+                 expected_count=1,
+                 parent=None):
+        super().__init__(parent)
+        self.number = number
+        self.title = title
+        self.description = description
+        self.script = Path(script) if script else None
+        self.terminal = terminal
+        self.category = category
+        self.folder = Path(folder) if folder else None
+        self.filename = filename
+        self.expected_count = expected_count
+        self.instructions = instructions.strip() if instructions else ""
+        self.remote_check = remote_check
+        self.available = bool(self.script and self.script.is_file())
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(224)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setStyleSheet(f"""
+            ScriptTile {{ background:{C_PANEL}; border:1px solid {C_BORDER}; border-radius:13px; }}
+            ScriptTile:hover {{ border:1px solid {C_RED}; background:#FFFFFF; }}
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 18)
+        layout.setSpacing(9)
+
+        accent = QFrame()
+        accent.setFixedHeight(4)
+        accent.setStyleSheet(f"background:{C_RED}; border:none; border-radius:2px;")
+        layout.addWidget(accent)
+
+        top = QHBoxLayout()
+        badge = QLabel(str(number).zfill(2))
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setFixedSize(36, 28)
+        badge.setStyleSheet(f"background:{C_FASTWEB}; color:#111827; border-radius:6px; font-size:12px; font-weight:bold;")
+        top.addWidget(badge)
+        top.addStretch()
+        tag = QLabel(category.upper())
+        tag.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        tag.setStyleSheet(f"background:#EEF1F5; color:{C_TEXT_MID}; border:none; border-radius:5px; padding:3px 7px; font-size:9px; font-weight:bold;")
+        top.addWidget(tag)
+        layout.addLayout(top)
+
+        name = QLabel(f"{emoji_script(title)}  {title}")
+        name.setWordWrap(True)
+        name.setStyleSheet(f"background:transparent; border:none; color:{C_TEXT_DARK}; font-size:18px; font-weight:bold;")
+        layout.addWidget(name)
+        detail = QLabel(description)
+        detail.setWordWrap(True)
+        detail.setStyleSheet(f"background:transparent; border:none; color:{C_TEXT_LIGHT}; font-size:13px;")
+        layout.addWidget(detail)
+
+        layout.addStretch()
+
+        bottom = QHBoxLayout()
+        self.status = QLabel()
+        self.status.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.status.setWordWrap(True)
+        bottom.addWidget(self.status)
+        bottom.addStretch()
+        self.open_button = QPushButton("Apri  →")
+        self.open_button.setCursor(Qt.PointingHandCursor)
+        self.open_button.setFixedSize(90, 34)
+        self.open_button.setStyleSheet(f"""
+            QPushButton {{ background:transparent; color:{C_RED}; border:1px solid {C_RED};
+                           border-radius:7px; font-size:12px; font-weight:bold; }}
+            QPushButton:hover {{ background:{C_RED_LIGHT}; }}
+            QPushButton:disabled {{ color:#9CA3AF; border-color:#D4D8DE; }}
+        """)
+        self.open_button.clicked.connect(self.open_dialog)
+        bottom.addWidget(self.open_button)
+        layout.addLayout(bottom)
+        global_signals.script_avviato.connect(lambda: self.open_button.setEnabled(False))
+        global_signals.script_terminato.connect(self.refresh_status)
+        self.status_timer = None
+        if self.folder and self.filename:
+            self.status_timer = QTimer(self)
+            self.status_timer.timeout.connect(self.refresh_status)
+            self.status_timer.start(3000)
+        self.refresh_status()
+
+    def readiness(self):
+        if not self.available:
+            return False, "Funzione non ancora disponibile."
+        if self.folder and self.filename:
+            matches = [file for file in self.folder.glob(self.filename) if file.is_file()]
+            count = len(matches)
+            if self.expected_count > 1:
+                if count == self.expected_count:
+                    return True, f"Tutti i file richiesti sono presenti: {count}/{self.expected_count}."
+                if count < self.expected_count:
+                    return False, f"File presenti: {count}/{self.expected_count}. Ne mancano {self.expected_count - count}."
+                return False, f"File presenti: {count}/{self.expected_count}. Rimuovi i {count - self.expected_count} file in eccesso."
+            if matches:
+                return True, f"File trovato: {matches[0].name}"
+            return False, f"File richiesto non trovato: {self.filename}"
+        return True, "Tutto pronto per l'esecuzione."
+
+    def refresh_status(self):
+        ready, message = self.readiness()
+        if not self.available:
+            short = "In sviluppo"
+        elif self.remote_check:
+            short = "Verifica all'apertura"
+        elif self.filename:
+            if self.expected_count > 1:
+                count = len([file for file in self.folder.glob(self.filename) if file.is_file()])
+                short = f"File presenti {count}/{self.expected_count}"
+            else:
+                short = "File pronto" if ready else "File mancante"
+        else:
+            short = "Pronto"
+        self.status.setText(short)
+        status_color = C_LOG_INFO if self.remote_check and self.available else (C_LOG_OK if ready else C_LOG_WARN)
+        self.status.setStyleSheet(
+            f"background:#F1F3F6; color:{status_color}; border:none; "
+            "border-radius:5px; padding:3px 7px; font-size:11px; font-weight:bold;")
+        self.open_button.setEnabled(self.available)
+        self.open_button.setText("Apri  →" if self.available else "In sviluppo")
+
+    def open_dialog(self):
+        if self.available:
+            # Il contenuto della cartella può cambiare per effetto della
+            # sincronizzazione SharePoint: aggiorna il badge prima del popup.
+            self.refresh_status()
+            ScriptLaunchDialog(self, self.window()).exec()
+            self.refresh_status()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.available:
+            self.open_dialog()
+        super().mousePressEvent(event)
+
+
+class WorkflowPage(QWidget):
+    def __init__(self, groups, terminal, columns=None, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"background:{C_BG};")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border:none; background:transparent; }")
+        body = QWidget()
+        body.setStyleSheet(f"background:{C_BG};")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(30, 18, 30, 28)
+        layout.setSpacing(10)
+        number = 1
+        for group_name, items in groups:
+            heading = QLabel(group_name.upper())
+            heading.setStyleSheet(f"color:{C_TEXT_MID}; font-size:11px; font-weight:bold; padding:14px 2px 3px 2px;")
+            layout.addWidget(heading)
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(12)
+            grid.setVerticalSpacing(12)
+            column_count = columns or min(4, max(1, len(items)))
+            for i, item in enumerate(items):
+                grid.addWidget(ScriptTile(
+                    number, item[0], item[1], item[2], terminal,
+                    category=group_name, folder=item[3] if len(item) > 3 else None,
+                    filename=item[4] if len(item) > 4 else None,
+                    instructions=item[5] if len(item) > 5 else "",
+                    remote_check=item[6] if len(item) > 6 else None,
+                    expected_count=item[7] if len(item) > 7 else 1),
+                    i // column_count, i % column_count)
+                number += 1
+            for column in range(column_count):
+                grid.setColumnStretch(column, 1)
+            layout.addLayout(grid)
+        layout.addStretch()
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
+
+
+class DashboardPage(QWidget):
+    def __init__(self, navigate, paths, on_raw_folder_changed, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"background:{C_BG};")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border:none; background:transparent; }")
+        body = QWidget()
+        body.setStyleSheet(f"background:{C_BG};")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(30, 24, 30, 28)
+        layout.setSpacing(16)
+
+        intro = QFrame()
+        intro.setStyleSheet(f"background:{C_SIDEBAR}; border:none; border-radius:14px;")
+        intro_layout = QHBoxLayout(intro)
+        intro_layout.setContentsMargins(26, 20, 22, 20)
+        intro_copy = QVBoxLayout()
+        intro_copy.setSpacing(4)
+        title = QLabel("Da dove vuoi iniziare?")
+        title.setStyleSheet("color:white; font-size:21px; font-weight:bold;")
+        sub = QLabel("Scegli un flusso oppure prepara i file di input qui sotto.")
+        sub.setStyleSheet("color:#AFB8C7; font-size:13px;")
+        intro_copy.addWidget(title)
+        intro_copy.addWidget(sub)
+        intro_layout.addLayout(intro_copy)
+        intro_layout.addStretch()
+        for text, page, primary in (("Giornalieri", "operations", True), ("Utilità", "tools", False)):
+            button = QPushButton(text)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(40)
+            if primary:
+                button.setStyleSheet(f"background:{C_FASTWEB}; color:#111827; border:none; border-radius:8px; padding:0 18px; font-weight:bold;")
+            else:
+                button.setStyleSheet("background:#263346; color:white; border:1px solid #3B4759; border-radius:8px; padding:0 18px; font-weight:bold;")
+            button.clicked.connect(lambda checked=False, p=page: navigate(p))
+            intro_layout.addWidget(button)
+        layout.addWidget(intro)
+
+        workflow_title = QLabel("FLUSSO DI LAVORO")
+        workflow_title.setStyleSheet(
+            f"color:{C_TEXT_MID}; font-size:11px; font-weight:bold; padding-top:6px;")
+        layout.addWidget(workflow_title)
+
+        steps = QFrame()
+        steps.setFixedHeight(58)
+        steps.setStyleSheet(f"background:{C_PANEL}; border:1px solid {C_BORDER}; border-radius:11px;")
+        steps_layout = QHBoxLayout(steps)
+        steps_layout.setContentsMargins(8, 7, 8, 7)
+        steps_layout.setSpacing(6)
+        for number, icon, title, detail in (
+            ("1", "▣", "Prepara", "Scegli la cartella RAW"),
+            ("2", "＋", "Carica", "Aggiungi i file richiesti"),
+            ("3", "▶", "Esegui", "Apri un flusso e avvia"),
+            ("4", "✓", "Controlla", "Verifica l'esito finale"),
+        ):
+            step_card = QFrame()
+            step_card.setStyleSheet(
+                f"background:{C_FASTWEB_LIGHT if number == '1' else '#F7F8FA'}; "
+                "border:none; border-radius:8px;")
+            step = QHBoxLayout(step_card)
+            step.setContentsMargins(8, 4, 9, 4)
+            step.setSpacing(7)
+            badge = QLabel(number)
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setFixedSize(30, 30)
+            badge.setStyleSheet(
+                f"background:{C_FASTWEB if number == '1' else C_SIDEBAR}; color:{'#111827' if number == '1' else 'white'}; "
+                "border-radius:15px; font-size:12px; font-weight:bold;")
+            step.addWidget(badge)
+            copy = QVBoxLayout()
+            copy.setSpacing(0)
+            heading = QLabel(f"{icon}  {title}")
+            heading.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:12px; font-weight:bold;")
+            caption = QLabel(detail)
+            caption.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:10px;")
+            copy.addWidget(heading)
+            copy.addWidget(caption)
+            step.addLayout(copy)
+            steps_layout.addWidget(step_card, stretch=1)
+            if number != "4":
+                arrow = QLabel("›")
+                arrow.setAlignment(Qt.AlignCenter)
+                arrow.setFixedWidth(10)
+                arrow.setStyleSheet(f"color:{C_RED}; font-size:20px; font-weight:bold;")
+                steps_layout.addWidget(arrow)
+        layout.addWidget(steps)
+
+        raw_title = QLabel("RAW FILES")
+        raw_title.setStyleSheet(f"color:{C_TEXT_MID}; font-size:11px; font-weight:bold; padding-top:6px;")
+        layout.addWidget(raw_title)
+        self.raw_files_widget = RawFilesWidget(
+            paths["RAW_FILES"], on_folder_changed=on_raw_folder_changed)
+        layout.addWidget(self.raw_files_widget)
+        layout.addStretch()
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
+
+
+class OperationsWindow(QMainWindow):
+    def __init__(self, sharepoint_root, raw_files_path=None):
+        super().__init__()
+        self.sharepoint_root = Path(sharepoint_root)
+        self.paths = _build_paths(
+            self.sharepoint_root, Path(raw_files_path) if raw_files_path else None)
+        os.environ["BASE_DIR"] = str(self.sharepoint_root)
+        os.environ["MYWAY_SHAREPOINT_ROOT"] = str(self.sharepoint_root)
+        self.setWindowTitle("MyWay Operations Hub")
+        self.setMinimumSize(1040, 680)
+        self.resize(1360, 860)
+        self.setWindowIcon(carica_icona())
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.sidebar = WorkspaceSidebar(self.show_page)
+        root.addWidget(self.sidebar)
+
+        workspace = QWidget()
+        workspace.setStyleSheet(f"background:{C_BG};")
+        workspace_layout = QVBoxLayout(workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(0)
+        self.header = WorkspaceHeader()
+        workspace_layout.addWidget(self.header)
+        self.terminal = TerminaleWidget()
+        self.pages = QStackedWidget()
+        self.pages.setStyleSheet(f"background:{C_BG};")
+        self.page_map = {}
+        self._build_pages()
+
+        self.splitter = QSplitter(Qt.Vertical)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(5)
+        self.splitter.setStyleSheet(f"QSplitter::handle {{ background:#DCE1E8; }} QSplitter::handle:hover {{ background:{C_FASTWEB}; }}")
+        self.splitter.addWidget(self.pages)
+        self.splitter.addWidget(self.terminal)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setSizes([670, 190])
+        workspace_layout.addWidget(self.splitter, stretch=1)
+        root.addWidget(workspace, stretch=1)
+        self.show_page("dashboard")
+        self.showMaximized()
+
+    def _build_pages(self):
+        p = self.paths
+        operations = [
+            ("Business", [
+                ("Estrai file gara", "Estrae, formatta e pubblica gara, opportunità e appuntamenti.", p["ESTRAI_FILE_GARA"]),
+                ("Forecast Business", "Genera il forecast giornaliero e la reportistica associata.", p["FCST"]),
+                ("Appuntamenti settimanali", "Prepara il report settimanale per ciascun venditore.", p["APPUNTAMENTI_SETTIMANA"]),
+                ("Elabora CB", "Analizza consistenze, anagrafiche e produce il report CB.",
+                 p["ELABORA_CB"], None, None,
+                 "Una volta ricevuto il file della nuova CB, controlla la corretta assegnazione "
+                 "dei venditori e inserisci il file nella cartella 00_SCAMBIO_DOCUMENTI > "
+                 "00_BUSINESS > CB > 00_DA_ELABORARE. Lo script è quindi pronto per essere lanciato.",
+                 "sharepoint_cb"),
+            ]),
+            ("Consumer", [
+                ("Formatta pedonalità", "Prepara il file pedonalità per le elaborazioni.",
+                 p["FORMATTA_PEDONALITA"], p["RAW_FILES"], "Giorgio Mandelli*.xlsx",
+                 "Accedi al portale Vodafone dedicato e richiedi la mail con il link per scaricare "
+                 "il file relativo alla pedonalità. Una volta ricevuta la mail, scarica il file e "
+                 "inseriscilo all'interno della cartella RAW_FILE."),
+                ("Cruscotto tracciamento", "Aggrega Business, Energia e Gadget per il monitoraggio negozi.", p["CRUSCOTTO_TRACCIAMENTO"]),
+                ("Cruscotto giornaliero", "Riunisce le piste Consumer nel report operativo quotidiano.",
+                 p["CRUSCOTTO_GIORNALIERO"], p["RAW_FILES"], "*AVANZAMENTI*.xls*",
+                 "Accedi a StoreSales e apri ANALISI > Avanzamenti Vendite. Scarica i file "
+                 "1.1, 1.2, 1.3, 2 e 3 selezionando PEZZI, quindi aggiungi _PEZZI alla fine "
+                 "del nome di ciascun file. Ripeti la stessa procedura selezionando PUNTI e "
+                 "aggiungi _PUNTI alla fine del nome di ciascun file. Una volta completato, "
+                 "inserisci tutti e 10 i file nella cartella RAW_FILE.",
+                 None, 10),
+                ("Giacenze smartphone", "Genera il report aggiornato delle giacenze smartphone.",
+                 p["REPORT_GIACENZE_SMARTPHONE"], p["RAW_FILES"], "*GIACENZE_ARTICOLI*.xls*",
+                 "Accedi a StoreSales e apri MAGAZZINO > Giacenze Articoli. "
+                 "Nel filtro CATEGORIE seleziona TELEFONIA > SMARTPHONE; nel campo VISUALIZZA "
+                 "seleziona «solo in giacenza». Apri il report e scarica il file XLS."),
+            ]),
+        ]
+        campaigns = [("Campagne", [
+            ("Divisione per agente", "Divide i file campagna e li assegna ai venditori.", p["DIVIDI_FILE_CAMPAGNE"]),
+            ("Riaggrega file", "Ricompone i file lavorati dai venditori.", p["AGGREGA_FILE_VENDITORI"]),
+            ("Presa in carico", "Controlla le lavorazioni e assegna i clienti al CRM.", p["PRESA_IN_CARICO"]),
+            ("Report campagne", "Statistiche, KPI ed esiti delle campagne.", p["REPORT_CAMPAGNE"]),
+        ])]
+        tools = [
+            ("Business", [
+                ("Formatta gara", "Elabora lo storico gara estratto dal CRM.", p["FORMATTA_GARA"]),
+                ("Formatta appuntamenti", "Prepara il file appuntamenti estratto dal CRM.", p["FORMATTA_APPUNTAMENTI"]),
+                ("Formatta opportunità", "Prepara il file opportunità estratto dal CRM.", p["FORMATTA_OPPORTUNITA"]),
+                ("Chiusura gara", "Estrae gli ordini attivati nella gara precedente.", p["CHIUSURA_GARA"]),
+            ]),
+            ("Consumer", [
+                ("Report pedonalità", "Crea il report di analisi dei flussi nei punti vendita.", p["REPORT_PEDONALITA"]),
+                ("Formatta magazzino", "Classifica e prepara il file valore del magazzino.", p["FORMATTA_MAGAZZINO"], p["RAW_FILES"], "VALORE_DEL_MAGAZZINO*.csv"),
+            ]),
+        ]
+        definitions = (
+            ("dashboard", DashboardPage(self.show_page, p, self.set_raw_folder)),
+            ("operations", WorkflowPage(operations, self.terminal)),
+            ("campaigns", WorkflowPage(campaigns, self.terminal, columns=3)),
+            ("tools", WorkflowPage(tools, self.terminal)),
+        )
+        for name, page in definitions:
+            self.page_map[name] = page
+            self.pages.addWidget(page)
+
+    def show_page(self, name):
+        self.pages.setCurrentWidget(self.page_map[name])
+        self.sidebar.select(name)
+        copy = {
+            "dashboard": ("Panoramica", "Centro operativo", "File di input e accesso immediato ai flussi."),
+            "operations": ("Esecuzione", "Giornalieri", "Le attività ricorrenti Business e Consumer."),
+            "campaigns": ("Workflow", "Campagne", "Dalla divisione dei file fino alla presa in carico."),
+            "tools": ("Supporto", "Utilità", "Formattazioni e procedure specialistiche."),
+        }
+        self.header.set_page(*copy[name])
+
+    def set_raw_folder(self, folder):
+        """Aggiorna e persiste la cartella RAW usata da tutte le procedure."""
+        folder = Path(folder)
+        self.paths["RAW_FILES"] = folder
+        salva_cartella_raw(folder, self.sharepoint_root)
+        for tile in self.findChildren(ScriptTile):
+            if tile.filename:
+                tile.folder = folder
+                tile.refresh_status()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            QApplication.quit()
+
+
+# ─────────────────────────────────────────────────────────────
 # AVVIO
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -1534,8 +2499,13 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
     app.setWindowIcon(carica_icona())
     app.setStyleSheet("""
-        QScrollBar:vertical { background: gray; width: 10px; }
-        QScrollBar::handle:vertical { background: gray; }
+        QWidget { font-family: "Segoe UI"; }
+        QToolTip { background:#111827; color:white; border:none; padding:5px; }
+        QScrollBar:vertical { background:transparent; width:9px; margin:2px; }
+        QScrollBar::handle:vertical { background:#C9CFD8; border-radius:4px; min-height:32px; }
+        QScrollBar::handle:vertical:hover { background:#AAB2BE; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:transparent; }
     """)
 
     # ── Carica config PRIMA dello splash ──────────────────────
@@ -1543,7 +2513,7 @@ if __name__ == "__main__":
 
     if config is None:
         messaggio = (
-            "Cartella SharePoint non raggiungibile o configurazione mancante."
+            "La cartella RAW_FILES non è configurata o non è raggiungibile."
             if CONFIG_PATH.exists()
             else ""
         )
@@ -1551,20 +2521,20 @@ if __name__ == "__main__":
         if dlg.exec() != QDialog.Accepted or dlg.sharepoint_root is None:
             sys.exit(0)
         sharepoint_root = dlg.sharepoint_root
+        raw_files_path = dlg.raw_files_path
     else:
-        sharepoint_root = Path(config["sharepoint_root"])
+        raw_value = config.get("raw_files_path")
+        raw_files_path = Path(raw_value) if raw_value else None
+        root_value = config.get("sharepoint_root")
+        sharepoint_root = Path(root_value) if root_value else raw_files_path.parent
 
-    # ── Solo dopo la config, mostra lo splash ─────────────────
-    splash = SplashScreen()
-    splash.show()
-    app.processEvents()
+    prepara_env_locale(sharepoint_root)
 
-    # ── Finestra principale ───────────────────────────────────
-    window = MainWindow(sharepoint_root)
-    QTimer.singleShot(1800, lambda: (splash.finish(window), window.show()))
+    # Mostra subito la finestra: nessun ritardo artificiale.
+    window = OperationsWindow(sharepoint_root, raw_files_path)
 
-    # ── Check aggiornamento DOPO che l'app è visibile ─────────
-    QTimer.singleShot(2500, lambda: (
+    # Il controllo aggiornamenti resta asincrono e parte dopo il primo render.
+    QTimer.singleShot(800, lambda: (
         __import__('updater').check_and_update(app)
     ))
 
