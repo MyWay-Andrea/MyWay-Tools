@@ -80,6 +80,23 @@ Script da lanciare per creare una nuova build e compilare l'installer.
 
 Automatizza i passaggi tecnici principali, descritti sotto.
 
+### `aggiorna_scripts.ps1`
+
+Sincronizza dalla cartella `SCRIPT` di lavoro soltanto i progetti richiamati
+dal menu e le dipendenze condivise. Elimina dalla copia del repository i
+progetti non attivi, ma conserva l'eventuale file locale `scripts/.env`.
+
+Esempio da PowerShell, eseguito dalla cartella del repository:
+
+```powershell
+.\aggiorna_scripts.ps1 -Origine "C:\percorso\MyWay Tools\SCRIPT"
+```
+
+La cartella indicata con `-Origine` deve contenere direttamente le sottocartelle
+`BUSINESS`, `CONSUMER` e i file condivisi `config_env.py` e
+`graph_sharepoint.py`. Lo script verifica prima che tutti i progetti necessari
+siano presenti; solo dopo sostituisce la copia locale.
+
 ### `dist\`
 
 Cartella generata da PyInstaller.
@@ -261,7 +278,8 @@ GitHub latest release -> setup.exe
 
 ## Note Operative
 
-* Gli script operativi presenti in `scripts/` sono inclusi nella build.
+* La build include esplicitamente soltanto gli script operativi richiamati dal menu e le loro dipendenze condivise.
+* `scripts/.env`, cache, file di prova e progetti storici non vengono inclusi nell'installer.
 * SharePoint continua a contenere input, output e file `.env`; questi ultimi non vengono copiati nella repository.
 * Le modifiche a `menu.py`, agli script, `updater.py`, `Menu.spec`, `setup.iss`, `requirements_runtime.txt` o `version.txt` richiedono una nuova build e una nuova release.
 * L'installer richiede privilegi amministrativi per installare in `Program Files`.
