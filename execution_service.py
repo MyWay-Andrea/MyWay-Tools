@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Signal, Slot, Qt, QLockFile
 
-from execution_history import HistoryStore, LogPolicy
+from execution_history import HistoryStore, LogPolicy, known_secrets
 from process_lifecycle import ProcessTree
 
 
@@ -71,8 +71,7 @@ class ExecutionService(QObject):
     def _run(self, activity, workflow_run_id, step_index, ready=True, preflight_message=""):
         start = time.monotonic()
         run_id, code, outcome = None, None, "errore"
-        policy = LogPolicy(self.history.settings, (value for key, value in os.environ.items()
-                          if re.search(r"(?i)password|passwd|token|secret|api.?key", key)))
+        policy = LogPolicy(self.history.settings, known_secrets(self.history.path.parent))
         pending, last_flush = [], time.monotonic()
         failure_seen = False
         # Existing scripts can report these failures and still exit with code zero.

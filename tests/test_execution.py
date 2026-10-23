@@ -72,14 +72,16 @@ class ExecutionTests(unittest.TestCase):
 
     def test_success_failure_launch_exception_missing_and_logs(self):
         self.history.settings["log_mode"] = "redacted"
+        (self.root / ".env").write_text("CLIENT_SECRET=private-profile-value\n")
         with patch.dict(os.environ, {"TEST_SECRET": "example-private-value"}):
-            row = self.run_activity(self.activity("print('hello'); print('example-private-value'); print('token=private123')"))
+            row = self.run_activity(self.activity("print('hello'); print('example-private-value'); print('token=private123'); print('private-profile-value')"))
         self.assertEqual(row["outcome"], "completato")
         self.assertEqual(row["exit_code"], 0)
         self.assertGreater(row["duration"], 0)
         self.assertIn("hello", row["log"])
         self.assertNotIn("example-private-value", row["log"])
         self.assertNotIn("private123", row["log"])
+        self.assertNotIn("private-profile-value", row["log"])
         row = self.run_activity(self.activity("raise SystemExit(4)"))
         self.assertEqual((row["outcome"], row["exit_code"]), ("errore", 4))
         with patch.object(ProcessTree, "launch", side_effect=OSError("secret not logged")):
@@ -114,6 +116,9 @@ class ExecutionTests(unittest.TestCase):
             self.assertFalse(self.service.start(activity))
             self.wait(lambda: pidfile.exists() and bool(pidfile.read_text()))
             child_pid = int(pidfile.read_text())
+            competing = ExecutionService(self.terminal, lambda: sys.executable, history=self.history)
+            self.assertFalse(competing.start(activity))
+            self.assertEqual(self.history.rows()[0]["outcome"], "in_esecuzione")
             self.service.cancel()
             self.wait(lambda: not self.service.busy)
             self.assertEqual(self.results[-1]["outcome"], "interrotto")
@@ -123,11 +128,17 @@ class ExecutionTests(unittest.TestCase):
             unrelated.terminate()
             unrelated.wait()
 
+    def test_unreadable_secret_file_does_not_leave_execution_locked(self):
+        (self.root / ".env").write_bytes(b"\xff\xfe\x00")
+        self.assertEqual(self.run_activity(self.activity())["outcome"], "completato")
+
     def test_recovery_filters_clear_and_retention(self):
         activity = self.activity()
         run_id = self.history.start(activity, "workflow-1", 0)
         self.history.recover()
         self.assertEqual(self.history.detail(run_id)["outcome"], "interrotto")
+        self.assertIsNone(self.history.detail(run_id)["duration"])
+        self.assertIsNone(self.history.detail(run_id)["ended_at"])
         self.run_activity(activity)
         self.assertEqual(len(self.history.rows("safe", "completato")), 1)
         self.assertEqual(sum(self.history.statistics()["counts"].values()), 2)

@@ -115,6 +115,7 @@ class WorkflowManager(QObject):
         self.step_states = []
         self.cancel_requested = False
         self.pending = False
+        self.finishing = False
         self._db_done.connect(self._after_db, Qt.QueuedConnection)
         execution.finished.connect(self._step_done)
 
@@ -135,7 +136,10 @@ class WorkflowManager(QObject):
             callback(result[1])
         else:
             self.message = f"Workflow fermato: errore di controllo o salvataggio ({result[1]})."
-            self._release("errore")
+            if self.finishing:
+                self._release("errore")
+            else:
+                self._finish("errore")
 
     def start(self, workflow):
         if self.active or self.execution.busy or self.execution.workflow_owner is not None:
@@ -147,6 +151,7 @@ class WorkflowManager(QObject):
             return False
         self.execution.workflow_owner = self
         self.active, self.cancel_requested = True, False
+        self.finishing = False
         self.workflow, self.run_id, self.index = workflow, uuid4().hex, 0
         self.step_states = ["In attesa"] * len(workflow["steps"])
         self.outcome, self.message = "in_esecuzione", "Preparazione workflow…"
@@ -206,6 +211,7 @@ class WorkflowManager(QObject):
         self._async(lambda: self.execution.history.update_workflow(self.run_id, self.index), lambda _: self._next())
 
     def _finish(self, outcome):
+        self.finishing = True
         self._async(lambda: self.execution.history.update_workflow(self.run_id, self.index, outcome),
                     lambda _: self._release(outcome))
 

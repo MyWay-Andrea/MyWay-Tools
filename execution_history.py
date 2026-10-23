@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -12,6 +13,20 @@ from operational_preferences import atomic_json, profile_dir
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def known_secrets(settings_dir):
+    """Read only known credential values for masking; never persist keys or values."""
+    key_pattern = re.compile(r"password|passwd|token|secret|api.?key", re.I)
+    values = [value for key, value in os.environ.items() if key_pattern.search(key)]
+    try:
+        for line in (Path(settings_dir) / ".env").read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and not key.lstrip().startswith("#") and key_pattern.search(key):
+                values.append(value.strip().strip("\"'"))
+    except (OSError, UnicodeError):
+        pass
+    return values
 
 
 class LogPolicy:
@@ -92,12 +107,12 @@ class HistoryStore:
 
     def recover(self):
         # Called only by the application that owns the profile execution lock.
-        now = utc_now()
         with self.connect() as db:
-            db.execute("""UPDATE runs SET ended_at=?, duration=MAX(0,(julianday(?) - julianday(started_at))*86400),
+            db.execute("""UPDATE runs SET ended_at=NULL, duration=NULL,
                        outcome='interrotto', log=log || ? WHERE outcome='in_esecuzione'""",
-                       (now, now, "\nSessione terminata senza esito: esecuzione interrotta, nessuna ripresa automatica.\n"))
-            db.execute("UPDATE workflow_runs SET ended_at=?,outcome='interrotto' WHERE outcome='in_esecuzione'", (now,))
+                       ("\nSessione terminata senza esito: esecuzione interrotta, nessuna ripresa automatica. "
+                        "Data di conclusione e durata effettiva sconosciute.\n",))
+            db.execute("UPDATE workflow_runs SET ended_at=NULL,outcome='interrotto' WHERE outcome='in_esecuzione'")
 
     def start_workflow(self, run_id, name, steps):
         with self.connect() as db:
@@ -146,17 +161,18 @@ class HistoryStore:
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             db.execute("VACUUM")
 
-    def rows(self, activity_id=None, outcome=None, limit=500, offset=0):
+    def rows(self, activity_id=None, outcome=None, limit=500, offset=0, newest_first=True):
         clauses, args = [], []
         for column, value in (("activity_id", activity_id), ("outcome", outcome)):
             if value:
                 clauses.append(f"{column}=?")
                 args.append(value)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        order = "DESC" if newest_first else "ASC"
         with self.connect() as db:
             return [dict(row) for row in db.execute(
                 "SELECT id,activity_id,activity_name,started_at,ended_at,duration,outcome,exit_code,workflow_run_id,step_index FROM runs"
-                + where + " ORDER BY started_at DESC,id DESC LIMIT ? OFFSET ?", args + [limit, offset])]
+                + where + f" ORDER BY started_at {order},id {order} LIMIT ? OFFSET ?", args + [limit, offset])]
 
     def detail(self, run_id):
         with self.connect() as db:

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QDialog, QTextEdit, QMessageBox,
+    QGridLayout, QFrame, QScrollArea,
 )
 from ui_theme import role, activity_icon, Theme
 
@@ -32,11 +33,20 @@ class AsyncQuery(QObject):
     def __init__(self, parent):
         super().__init__(parent)
         self.version = 0
+        self.running = False
+        self.pending = None
         self._result.connect(self._deliver, Qt.QueuedConnection)
 
     def run(self, function):
         self.version += 1
         version = self.version
+        if self.running:
+            self.pending = (version, function)
+            return
+        self._start(version, function)
+
+    def _start(self, version, function):
+        self.running = True
         def worker():
             try:
                 result = {"data": function()}
@@ -50,11 +60,16 @@ class AsyncQuery(QObject):
 
     @Slot(int, object)
     def _deliver(self, version, result):
+        self.running = False
         if version == self.version:
             self.ready.emit(result)
+        if self.pending:
+            request, self.pending = self.pending, None
+            self._start(*request)
 
 
 class HistoryPage(QWidget):
+    history_cleared = Signal()
     def __init__(self, store, activities, parent=None):
         super().__init__(parent)
         self.store = store
@@ -79,11 +94,18 @@ class HistoryPage(QWidget):
         for control in (self.activity_filter, self.outcome_filter):
             filters.addWidget(control)
             control.currentIndexChanged.connect(self.reset_filter)
+        self.order = QComboBox()
+        self.order.addItem("Più recenti prima", True)
+        self.order.addItem("Meno recenti prima", False)
+        self.order.currentIndexChanged.connect(self.reset_filter)
+        filters.addWidget(self.order)
         refresh = QPushButton("Aggiorna")
         refresh.clicked.connect(self.refresh)
         filters.addWidget(refresh)
         layout.addLayout(filters)
         self.table = QTableWidget(0, 4)
+        self.table.setShowGrid(False)
+        self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.setHorizontalHeaderLabels(["Attività", "Data e ora", "Durata", "Esito"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         for column in (1, 2, 3):
@@ -127,7 +149,8 @@ class HistoryPage(QWidget):
         if not self.isVisible():
             return
         activity, outcome, offset = self.activity_filter.currentData(), self.outcome_filter.currentData(), self.offset
-        self.query.run(lambda: self.store.rows(activity, outcome, 100, offset))
+        newest_first = self.order.currentData()
+        self.query.run(lambda: self.store.rows(activity, outcome, 100, offset, newest_first))
 
     def render(self, result):
         if "error" in result:
@@ -151,7 +174,7 @@ class HistoryPage(QWidget):
         self.previous.setEnabled(self.offset > 0)
         self.next.setEnabled(len(self.rows) == 100)
         self.note.setText("Nessuna esecuzione per questi filtri." if not self.rows else
-                          f"{len(self.rows)} esecuzioni, dalla più recente. Conservazione: {self.store.settings['retention_days']} giorni.")
+                          f"{len(self.rows)} esecuzioni. Conservazione: {self.store.settings['retention_days']} giorni.")
 
     def open_detail(self, row, *_):
         item = self.table.item(row, 0)
@@ -189,3 +212,113 @@ class HistoryPage(QWidget):
         else:
             self.offset = 0
             self.refresh()
+            self.history_cleared.emit()
+
+
+class SummaryDashboard(QWidget):
+    def __init__(self, store, navigate, parent=None):
+        super().__init__(parent)
+        self.store = store
+        self.stats = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        heading = QHBoxLayout()
+        heading.addWidget(role(QLabel("Riepilogo attività"), "title"))
+        heading.addStretch()
+        history = QPushButton("Apri storico")
+        history.clicked.connect(lambda: navigate("history"))
+        heading.addWidget(history)
+        layout.addLayout(heading)
+        self.note = role(QLabel("Nessuna esecuzione registrata. Avvia un'attività dai tuoi preferiti."), "secondary")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName("summaryBody")
+        content = QVBoxLayout(body)
+        content.setContentsMargins(0, 12, 0, 0)
+        grid = QGridLayout()
+        grid.setSpacing(12)
+        self.cards = {}
+        for index, (key, title) in enumerate((("total", "Esecuzioni totali"), ("completed", "Completate"),
+                                             ("failed", "Fallite"), ("rate", "Tasso di successo"))):
+            card = QFrame()
+            card.setStyleSheet("QFrame {background:#F5F5F8; border-radius:12px;}")
+            box = QVBoxLayout(card)
+            box.setContentsMargins(18, 16, 18, 16)
+            box.addWidget(role(QLabel(title), "secondary"))
+            value = role(QLabel("—"), "title")
+            box.addWidget(value)
+            self.cards[key] = value
+            grid.addWidget(card, index // 2, index % 2)
+        content.addLayout(grid)
+        self.last = role(QLabel("Ultima attività: nessuna"), "body")
+        self.last.setWordWrap(True)
+        content.addWidget(self.last)
+        content.addSpacing(12)
+        content.addWidget(role(QLabel("Attività recenti"), "section"))
+        self.recent = QTableWidget(0, 4)
+        self.recent.setShowGrid(False)
+        self.recent.verticalHeader().setDefaultSectionSize(36)
+        self.recent.setHorizontalHeaderLabels(["Attività", "Data e ora", "Durata", "Esito"])
+        self.recent.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in (1, 2, 3):
+            self.recent.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        self.recent.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.recent.verticalHeader().hide()
+        self.recent.setMinimumHeight(195)
+        self.recent.setMaximumHeight(210)
+        content.addWidget(self.recent)
+        content.addSpacing(12)
+        content.addWidget(role(QLabel("Attività più frequenti"), "section"))
+        self.frequent = QVBoxLayout()
+        content.addLayout(self.frequent)
+        content.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll, 1)
+        self.query = AsyncQuery(self)
+        self.query.ready.connect(self.render)
+
+    def refresh(self, *_):
+        if self.isVisible():
+            self.query.run(self.store.statistics)
+
+    def render(self, result):
+        if "error" in result:
+            self.note.setText(result["error"])
+            return
+        self.stats = result["data"]
+        counts, recent = self.stats["counts"], self.stats["recent"]
+        total = sum(counts.values())
+        completed = counts.get("completato", 0)
+        finished = total - counts.get("in_esecuzione", 0)
+        for key, value in {"total": str(total), "completed": str(completed),
+                           "failed": str(counts.get("errore", 0)),
+                           "rate": f"{completed / finished * 100:.0f}%" if finished else "—"}.items():
+            self.cards[key].setText(value)
+        self.note.setText("Nessuna esecuzione registrata. Avvia un'attività dai tuoi preferiti." if not total else
+            f"Dati dello storico conservato · {counts.get('interrotto', 0)} interrotte · "
+            f"{counts.get('in_esecuzione', 0)} in corso. Tasso: completate / concluse, incluse le interrotte.")
+        self.last.setText(f"Ultima attività: {recent[0]['activity_name']} · {display_date(recent[0]['started_at'])}" if recent else
+                          "Ultima attività: nessuna")
+        self.recent.setRowCount(len(recent))
+        for index, row in enumerate(recent):
+            for column, value in enumerate((row["activity_name"], display_date(row["started_at"]),
+                                            display_duration(row["duration"]), OUTCOMES[row["outcome"]])):
+                item = QTableWidgetItem(value)
+                if column == 0:
+                    item.setIcon(activity_icon(row["activity_id"]))
+                if column == 3:
+                    item.setForeground(QColor("#B42332" if row["outcome"] == "errore" else
+                                              Theme.SUCCESS if row["outcome"] == "completato" else Theme.MUTED))
+                self.recent.setItem(index, column, item)
+        while self.frequent.count():
+            item = self.frequent.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not self.stats["frequent"]:
+            self.frequent.addWidget(role(QLabel("Le attività più usate appariranno dopo le prime esecuzioni."), "secondary"))
+        for row in self.stats["frequent"]:
+            self.frequent.addWidget(role(QLabel(f"{row['activity_name']} · {row['count']} esecuzioni"), "body"))

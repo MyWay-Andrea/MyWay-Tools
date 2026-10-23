@@ -123,6 +123,45 @@ class WorkspaceTests(unittest.TestCase):
         QTest.qWait(50)
         editor.deleteLater()
 
+    def test_summary_history_real_data_and_filters(self):
+        self.window.show_page("summary")
+        dashboard = self.window.summary_page
+        self.wait_until(lambda: dashboard.stats is not None)
+        self.assertEqual(dashboard.cards["total"].text(), "0")
+        self.assertEqual(dashboard.cards["rate"].text(), "—")
+        self.assertEqual(dashboard.recent.rowCount(), 0)
+        success = self.root / "dashboard_success.py"
+        success.write_text("print('SAFE_DASHBOARD')")
+        failure = self.root / "dashboard_failure.py"
+        failure.write_text("raise SystemExit(2)")
+        with patch.object(menu, "_trova_python", return_value=sys.executable):
+            menu.lancia_script(success, self.window.terminal)
+            self.wait_until(lambda: dashboard.cards["total"].text() == "1")
+            menu.lancia_script(failure, self.window.terminal)
+            self.wait_until(lambda: dashboard.cards["total"].text() == "2")
+        self.assertEqual(dashboard.cards["completed"].text(), "1")
+        self.assertEqual(dashboard.cards["failed"].text(), "1")
+        self.assertEqual(dashboard.cards["rate"].text(), "50%")
+        self.assertEqual(dashboard.recent.rowCount(), 2)
+        output = os.environ.get("MYWAY_UI_SCREENSHOTS")
+        if output:
+            self.window.grab().save(str(Path(output) / "workspace-summary.png"))
+        self.window.show_page("history")
+        history = self.window.history_page
+        self.wait_until(lambda: history.table.rowCount() == 2)
+        history.outcome_filter.setCurrentIndex(history.outcome_filter.findData("errore"))
+        self.wait_until(lambda: history.table.rowCount() == 1)
+        self.assertEqual(history.table.item(0, 3).text(), "Errore")
+        history.open_detail(0)
+        self.wait_until(lambda: any(w.isVisible() for w in history.findChildren(menu.QDialog)))
+        for dialog in history.findChildren(menu.QDialog):
+            dialog.close()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+            history.clear_history()
+        self.wait_until(lambda: history.table.rowCount() == 0)
+        self.window.show_page("summary")
+        self.wait_until(lambda: dashboard.cards["total"].text() == "0")
+
     def test_script_bindings_and_lock_across_refresh_and_navigation(self):
         with patch.object(menu, "lancia_script", side_effect=lambda *args: menu.global_signals.script_avviato.emit()) as launch:
             for activity in self.window.activities:

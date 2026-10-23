@@ -1,4 +1,5 @@
 import os
+import runpy
 
 runtime_path = r'C:\TEMP\_runtime'
 site_packages = os.path.join(runtime_path, 'Lib', 'site-packages')
@@ -30,6 +31,9 @@ script_datas = [
     ('scripts/CONSUMER/12_CRUSCOTTO_PISTA_CONSUMER', 'scripts/CONSUMER/12_CRUSCOTTO_PISTA_CONSUMER'),
     ('scripts/CONSUMER/13_REPORT_GIACENZE', 'scripts/CONSUMER/13_REPORT_GIACENZE'),
 ]
+
+asset_collector = runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(SPEC)), 'packaging_assets.py'))
+script_datas = asset_collector['script_assets'](script_datas, os.path.dirname(os.path.abspath(SPEC)))
 
 a = Analysis(
     ['menu.py'],

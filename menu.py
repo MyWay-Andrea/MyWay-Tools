@@ -16,7 +16,7 @@ from ui_theme import Theme, WORKSPACE_QSS, TERMINAL_QSS, role, set_tone, line_ic
 from ui_widgets import ElidedLabel
 from operational_preferences import Favorites
 from execution_service import ExecutionService
-from operations_views import HistoryPage
+from operations_views import HistoryPage, SummaryDashboard, AsyncQuery
 from activity_status import StatusService
 from workflow_service import WorkflowStore, WorkflowManager
 from workflow_views import WorkflowPage as ManagedWorkflowPage
@@ -802,9 +802,11 @@ class RawFilesWidget(QFrame):
         outer.addWidget(hint)
 
         self.setAcceptDrops(True)
+        self._file_query = AsyncQuery(self)
+        self._file_query.ready.connect(self._render_files)
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._aggiorna_lista)
-        self._timer.start(3000)
+        self._timer.timeout.connect(lambda: self._aggiorna_lista() if self.isVisible() else None)
+        self._timer.start(30000)
         self._aggiorna_lista()
 
     def _scegli_cartella(self):
@@ -846,7 +848,25 @@ class RawFilesWidget(QFrame):
         )
 
     def _aggiorna_lista(self, force=False):
-        files = self._leggi_files()
+        folder = self.cartella
+        def read_files():
+            files = sorted((f for f in folder.iterdir() if f.is_file() and f.name not in self._ESCLUDI
+                            and not f.name.startswith(".")), key=lambda f: f.name.lower())
+            return folder, [(file, file.stat().st_size) for file in files], force
+        self._file_query.run(read_files)
+
+    def _render_files(self, result):
+        if "error" in result:
+            self.lbl_count.setText("Errore di verifica")
+            self.lbl_vuoto.setText("Impossibile leggere la cartella RAW. Controlla disponibilità e permessi.")
+            self.lbl_vuoto.show()
+            self.lista_frame.hide()
+            return
+        folder, entries, force = result["data"]
+        if folder != self.cartella:
+            return
+        files = [file for file, size in entries]
+        self.lbl_vuoto.setText("Nessun file presente. Carica i file RAW da processare.")
         self.lbl_percorso.setText(f"Cartella attiva:  {self.cartella}")
         self.lbl_count.setText(f"{len(files)} file" if len(files) != 1 else "1 file")
         self.lbl_vuoto.setVisible(len(files) == 0)
@@ -860,12 +880,12 @@ class RawFilesWidget(QFrame):
         while self.lista_layout.count():
             item = self.lista_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
-        for fpath in files:
-            self.lista_layout.addWidget(self._crea_riga(fpath))
+        for fpath, size in entries:
+            self.lista_layout.addWidget(self._crea_riga(fpath, size))
         self.lbl_vuoto.setVisible(len(files) == 0)
         self.lista_frame.setVisible(len(files) > 0)
 
-    def _crea_riga(self, fpath: Path) -> QFrame:
+    def _crea_riga(self, fpath: Path, size=None) -> QFrame:
         riga = QFrame()
         riga.setProperty("nome_file", fpath.name)
         riga.setFixedHeight(42)
@@ -879,8 +899,7 @@ class RawFilesWidget(QFrame):
         lay.addWidget(lbl_ico)
         lbl_nome = ElidedLabel(fpath.name)
         lay.addWidget(lbl_nome)
-        try:    size_str = formatta_dimensione(fpath.stat().st_size)
-        except: size_str = "—"
+        size_str = formatta_dimensione(size) if size is not None else "—"
         lbl_size = role(QLabel(size_str), "secondary")
         lbl_size.setFixedWidth(60)
         lbl_size.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -1621,6 +1640,7 @@ class WorkspaceSidebar(QFrame):
             ("files", "File", "files"),
             ("today", "Storico", "history"),
             ("play", "Workflow", "workflows"),
+            ("chart", "Riepilogo", "summary"),
         ):
             button = WorkspaceNavButton(icon, text, page, callback)
             self.buttons[page] = button
@@ -2834,6 +2854,7 @@ class OperationsWindow(QMainWindow):
         self.files_page = FilesPage(self.paths, self.set_raw_folder)
         self.hub.detail.files_requested.connect(lambda: self.show_page("files"))
         self.hub.detail.add_files_requested.connect(self.files_page.raw_files_widget._carica_file)
+        self.status_service.watcher.directoryChanged.connect(lambda _: self.files_page.raw_files_widget._aggiorna_lista())
         self.pages = QStackedWidget()
         self.pages.addWidget(self.hub)
         self.pages.addWidget(self.files_page)
@@ -2843,6 +2864,11 @@ class OperationsWindow(QMainWindow):
         self.workflow_manager = WorkflowManager(self.execution, self.activities, parent=self)
         self.workflow_page = ManagedWorkflowPage(self.workflow_store, self.workflow_manager, self.activities)
         self.pages.addWidget(self.workflow_page)
+        self.summary_page = SummaryDashboard(self.execution.history, self.show_page)
+        self.pages.addWidget(self.summary_page)
+        self.execution.finished.connect(self.summary_page.refresh)
+        self.history_page.history_cleared.connect(self.summary_page.refresh)
+        self.history_page.history_cleared.connect(self.workflow_page.load_recent)
         self.workflow_manager.changed.connect(self._execution_changed)
         self.execution.finished.connect(self.history_page.refresh)
         self.terminal.btn_stop = QPushButton("Interrompi")
@@ -2942,6 +2968,10 @@ class OperationsWindow(QMainWindow):
 
     def show_page(self, name):
         self.sidebar.select(name)
+        if name == "summary":
+            self.pages.setCurrentWidget(self.summary_page)
+            self.summary_page.refresh()
+            return
         if name == "workflows":
             self.pages.setCurrentWidget(self.workflow_page)
             self.workflow_page.refresh()
@@ -2953,6 +2983,7 @@ class OperationsWindow(QMainWindow):
             return
         if name == "files":
             self.pages.setCurrentWidget(self.files_page)
+            self.files_page.raw_files_widget._aggiorna_lista()
             self.header.set_page("Archivio", "File", "Input e cartella di lavoro.")
             return
         self.pages.setCurrentWidget(self.hub)

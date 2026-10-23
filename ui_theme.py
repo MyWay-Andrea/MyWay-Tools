@@ -28,6 +28,11 @@ WORKSPACE_QSS = """
 QWidget { font-family:"Segoe UI"; font-size:13px; color:#242426; }
 QMainWindow, QWidget#workspace, QWidget#hub, QWidget#filesPage,
 QWidget#listBody, QWidget#fileBody, QFrame#listPanel { background:#FFFFFF; }
+QWidget#summaryBody { background:#FFFFFF; }
+QTableWidget, QListWidget { background:#FFFFFF; border:1px solid #E5E5E9;
+                           border-radius:8px; selection-background-color:#E9E9EE; selection-color:#242426; }
+QHeaderView::section { background:#F5F5F7; color:#717178; border:0; padding:8px; font-weight:600; }
+QComboBox { background:#F2F2F6; border:1px solid #E5E5E9; border-radius:8px; padding:7px; }
 QLabel { background:transparent; border:none; }
 QLabel[role="title"] { font-size:26px; font-weight:600; }
 QLabel[role="section"] { font-size:18px; font-weight:600; }

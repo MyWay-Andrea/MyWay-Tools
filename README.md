@@ -329,3 +329,158 @@ GitHub latest release -> setup.exe
 * SharePoint continua a contenere input, output e file `.env`; questi ultimi non vengono copiati nella repository.
 * Le modifiche a `menu.py`, agli script, `updater.py`, `Menu.spec`, `setup.iss`, `requirements_runtime.txt` o `version.txt` richiedono una nuova build e una nuova release.
 * L'installer richiede privilegi amministrativi per installare in `Program Files`.
+
+## Centro operativo: preferiti, storico e workflow
+
+L'entrypoint distribuito rimane `menu.py` → `OperationsWindow` → `ModernHubPage`.
+Le vecchie classi di schermata restano per compatibilità, ma non vengono istanziate
+dall'avvio corrente. Il checkpoint Git prima di questa evoluzione è `fe903a7`;
+il repository era pulito e l'ultimo intervento era il restyling `f93c361`.
+
+Oggi contiene inizialmente Estrai file gara, Forecast Business, Formatta pedonalità,
+Cruscotto tracciamento e Cruscotto giornaliero. Le stelle aggiungono/rimuovono
+preferiti immediatamente, senza avviare l'attività. Il catalogo resta unico;
+Business, Consumer, Campagne e Tutte le attività mantengono le stesse procedure.
+Storico, Workflow e Riepilogo sono voci aggiuntive nella navigazione.
+
+### Profilo persistente
+
+Tutti i nuovi file sono in `%APPDATA%\MyWayTools`; `config.json` mantiene il suo
+schema e viene aggiornato soltanto quando si cambia la configurazione RAW.
+
+| File | Schema e contenuto |
+| --- | --- |
+| `preferences.json` | `schema_version: 1`, `favorites: [ID...]`; ordine conservato, anche lista vuota valida |
+| `history.db` | SQLite `PRAGMA user_version=2`; tabelle `runs` e `workflow_runs` |
+| `history_settings.json` | `schema_version: 1`, `retention_days: 90`, `log_mode: "summary"`, `max_log_chars: 64000` |
+| `workflows.json` | `schema_version: 1`, `workflows: []` al primo avvio |
+| `execution.lock` | Lock transitorio Qt per impedire esecuzioni contemporanee tra finestre/processi dello stesso profilo |
+
+Le scritture JSON sono atomiche. Un file preferenze corrotto viene conservato come
+`preferences.invalid-<uuid>.json` prima del ripristino dei cinque valori iniziali.
+Gli ID sconosciuti vengono ignorati nella vista, ma conservati su disco per non
+perdere preferenze di attività temporaneamente assenti. Cambiare un titolo non
+cambia l'ID. Una configurazione workflow non valida viene conservata e blocca
+l'avvio finché non viene corretta; nessuna catena viene riparata eliminando passaggi.
+
+`runs` conserva ID, ID/nome attività, avvio/fine in UTC, durata in secondi,
+esito (`completato`, `errore`, `interrotto`, `in_esecuzione`), exit code nullable,
+log, ID esecuzione workflow e indice del passaggio. Le date sono mostrate nel fuso
+locale di Windows. `workflow_runs` conserva nome, sequenza, indice raggiunto ed
+esito complessivo. Le esecuzioni rimaste aperte dopo un arresto dell'app vengono
+marcate interrotte al successivo avvio libero da altri esecutori: non ripartono.
+In questo caso fine e durata restano sconosciute (`NULL`, visualizzato come «—»),
+senza inventare l'istante effettivo dell'arresto.
+
+Lo storico è filtrabile per attività/esito, ordinabile per data e paginato; il
+doppio clic apre dettaglio e log. La dashboard calcola i valori sull'intero storico
+ancora conservato. Il tasso di successo è completate / concluse (interrotte incluse,
+esecuzioni in corso escluse); mostra inoltre le ultime cinque e le più frequenti.
+
+### Log e conservazione
+
+Il valore predefinito `log_mode: "summary"` salva soltanto eventi di avvio, esito e
+diagnostica del servizio. L'output originale degli script rimane nel terminale
+della sessione e non viene modificato nei file originali. È una scelta di
+minimizzazione: alcuni script stampano intere tabelle di dati aziendali.
+
+Per conservare anche l'output, impostare `log_mode: "redacted"` in
+`history_settings.json` a programma chiuso. Vengono oscurati segreti noti nelle
+variabili di credenziali e nel `.env` del profilo, token riconoscibili e indirizzi
+email. Il mascheramento **non garantisce** la rimozione di tutti i dati riservati;
+non abilitare questa modalità senza valutare gli output degli script coinvolti.
+Il limite è per esecuzione (predefinito 64.000 caratteri); i log oltre il limite
+non sono conservati. `retention_days` accetta da 1 a 3650 giorni. Il pulsante
+Elimina storico elimina registrazioni concluse e log, mantenendo quelle in corso;
+usa secure-delete, checkpoint e compattazione SQLite, senza promettere cancellazione
+forense di backup o copie del filesystem.
+
+### Configurare un workflow
+
+Aprire **Workflow → Nuovo**, assegnare un nome, aggiungere attività e usare
+Sposta su/Sposta giù per ordinarle. Salvare e poi premere **Avvia workflow**.
+Il salvataggio non avvia nulla. Sono possibili modifica, eliminazione e ricarica.
+Verificare prima le dipendenze operative: non sono predisposte catene aziendali.
+
+Il formato su disco accetta ID semplici oppure passaggi con controlli output.
+Esempio di sola struttura (non viene installato né avviato automaticamente):
+
+```json
+{
+  "schema_version": 1,
+  "workflows": [{
+    "id": "sequenza-scelta-dall-utente",
+    "name": "La mia sequenza",
+    "steps": [
+      {"activity_id": "estrai_file_gara"},
+      {"activity_id": "forecast_business"}
+    ]
+  }]
+}
+```
+
+Un passaggio può aggiungere `"outputs": [{"folder": "C:\\Reports",
+"pattern": "*.xlsx", "min_count": 1, "changed": true}]`. La cartella deve essere
+assoluta; `changed` è true per default e richiede file nuovi o modificati dopo
+l'istantanea precedente all'avvio, evitando di accettare output vecchi. Questi
+controlli si configurano nel file JSON e vengono preservati dall'editor grafico.
+Sono controlli di presenza/aggiornamento, non di correttezza dei contenuti Excel
+o delle pubblicazioni remote. Per verifiche applicative specifiche il catalogo
+offre `ActivitySpec.output_validator`, eseguito nel worker dopo exit 0.
+
+Ogni passaggio verifica nuovamente script, requisiti RAW e, per Elabora CB,
+SharePoint prima di eseguire. Qualsiasi errore arresta la catena. Sono riconosciuti
+anche i messaggi di errore della conformità pedonalità e dei report forecast
+saltati, che gli script possono emettere con exit 0. Gli script restano invariati.
+**Interrompi workflow** termina solo l'albero di processi appartenente al lancio:
+su Windows viene usato un Job Object assegnato prima di riprendere il processo.
+
+### Architettura e verifiche
+
+* `operational_preferences.py`: preferiti e JSON atomico.
+* `activity_status.py`: stato condiviso, watcher, debounce e fallback di 30 secondi;
+  verifiche locali in worker, controllo remoto esplicito e ripetuto prima dell'avvio.
+* `execution_service.py` / `process_lifecycle.py`: unico avvio, lock, lifecycle,
+  log e interruzione. La firma pubblica `lancia_script()` resta compatibile; il
+  callback booleano viene consegnato nel thread Qt e il risultato resta asincrono,
+  anche per script mancanti. Il bootstrap `runpy` degli script è conservato.
+* `execution_history.py`, `operations_views.py`: SQLite, storico e dashboard;
+  le letture delle viste avvengono in background con richieste accorpate.
+* `workflow_service.py`, `workflow_views.py`: definizioni, sequenza ed editor.
+* `ui_theme.py`: icone QPainter scalabili e palette centralizzata per ID; nessuna
+  risorsa remota, font proprietario o dipendenza QtSvg aggiuntiva.
+
+`_REL_PATHS`, nomi degli script, autenticazione, funzioni SharePoint, sincronizzazione
+`aggiorna_scripts.ps1`, updater e versioni di release non sono stati modificati.
+L'unica modifica al packaging è l'espansione filtrata dei dati in `Menu.spec`
+tramite `packaging_assets.py`: mantiene sorgenti, quattro JSON applicativi e due
+template, escludendo cache, `.env` e cartelle output con dati operativi preesistenti.
+I file originali restano nel repository. I nuovi moduli sono raccolti dagli import
+Python ordinari; nessun dato del profilo utente entra nel pacchetto.
+
+Eseguire i test con un Python dotato di PySide6 e psutil:
+
+```powershell
+& C:/TEMP/_runtime/python.exe -B -m unittest discover -s tests -v
+```
+
+I test usano profili temporanei, script innocui e risposte SharePoint simulate.
+Coprono preferiti, errori JSON, UI, watcher, preflight, cronologia, dashboard,
+errori/interrupt dei subprocess, isolamento dei figli, workflow e filtri packaging.
+Impostare `MYWAY_UI_SCREENSHOTS` per salvare schermate a 1280×800, 1600×900,
+1920×1080 e 1024×640; sono inclusi controlli del rendering delle icone a DPI frazionari.
+`tests/smoke_frozen.py <percorso-exe>` verifica l'avvio congelato con profilo
+isolato e proxy locale non disponibile per impedire download dell'updater.
+
+Non vengono eseguiti processi aziendali reali, autenticazioni SharePoint o invii
+email di produzione. Il collaudo con tali sistemi, i contenuti effettivi degli
+output aziendali e l'installazione/aggiornamento Inno Setup richiedono verifica
+operativa dedicata prima di pubblicare una release.
+
+Verifica dell'evoluzione del centro operativo (23 ottobre 2026): 32 test automatici
+superati, build PyInstaller pulita e avvio dell'eseguibile con profilo isolato
+riusciti. Confrontato il bytecode congelato di 11 moduli con i sorgenti definitivi;
+verificate 84 risorse operative incluse, senza cartelle output, `.env` o cache degli
+script. Controllate visivamente le schermate Qt generate. La build di verifica è
+in `build/verification-dist/MyWayTools`; non è un installer di release e non include
+la copia separata di `_runtime` effettuata dal normale `build.bat`.

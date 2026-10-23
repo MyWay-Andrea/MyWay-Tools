@@ -123,6 +123,8 @@ class WorkflowPage(QWidget):
         layout.addLayout(controls)
         layout.addWidget(role(QLabel("Ultimi workflow"), "section"))
         self.recent = QTableWidget(0, 3)
+        self.recent.setShowGrid(False)
+        self.recent.verticalHeader().setDefaultSectionSize(36)
         self.recent.setHorizontalHeaderLabels(["Workflow", "Avvio", "Esito"])
         self.recent.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.recent.setEditTriggers(QAbstractItemView.NoEditTriggers)
