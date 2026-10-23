@@ -112,7 +112,7 @@ class ExecutionTests(unittest.TestCase):
         try:
             self.assertTrue(self.service.start(activity))
             self.assertFalse(self.service.start(activity))
-            self.wait(lambda: pidfile.exists())
+            self.wait(lambda: pidfile.exists() and bool(pidfile.read_text()))
             child_pid = int(pidfile.read_text())
             self.service.cancel()
             self.wait(lambda: not self.service.busy)

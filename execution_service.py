@@ -32,6 +32,7 @@ class ExecutionService(QObject):
         self.cancelled = threading.Event()
         self._callback = None
         self.workflow_owner = None
+        self.status_service = None
         self.profile_lock = QLockFile(str(self.history.path.with_name("execution.lock")))
         self.profile_lock.setStaleLockTime(0)
         if self.profile_lock.tryLock(0):
@@ -57,10 +58,15 @@ class ExecutionService(QObject):
         self.cancelled.clear()
         self.started.emit(activity)
         self.changed.emit()
-        threading.Thread(target=self._run, args=(activity, workflow_run_id, step_index), daemon=True).start()
+        def checked(ready=True, message=""):
+            threading.Thread(target=self._run, args=(activity, workflow_run_id, step_index, ready, message), daemon=True).start()
+        if self.status_service and activity.activity_id in self.status_service.activities:
+            self.status_service.check(activity, checked)
+        else:
+            checked()
         return True
 
-    def _run(self, activity, workflow_run_id, step_index):
+    def _run(self, activity, workflow_run_id, step_index, ready=True, preflight_message=""):
         start = time.monotonic()
         run_id, code, outcome = None, None, "errore"
         policy = LogPolicy(self.history.settings, (value for key, value in os.environ.items()
@@ -83,6 +89,14 @@ class ExecutionService(QObject):
         try:
             run_id = self.history.start(activity, workflow_run_id, step_index)
             log(f"\nAvvio: {activity.title}\n", True)
+            if self.cancelled.is_set():
+                outcome = "interrotto"
+                log("Interrotto prima dell'avvio del processo.\n", True)
+                return
+            if not ready:
+                log("Requisiti non soddisfatti: elaborazione non avviata.\n", True)
+                log(preflight_message + "\n")
+                return
             if policy.mode != "redacted":
                 self.history.append(run_id, "Log sintetico: output dello script consultabile nel terminale durante la sessione.\n")
             script = Path(activity.script).resolve() if activity.script else None

@@ -21,6 +21,7 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QFontDatabase
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 import menu
+from activity_status import ActivityState
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -46,6 +47,7 @@ class WorkspaceTests(unittest.TestCase):
         self.window.resize(1280, 800)
         self.app.processEvents()
         self.detail = self.window.hub.detail
+        self.wait_until(lambda: not self.window.status_service.scanning)
 
     def tearDown(self):
         self.window.close()
@@ -145,16 +147,20 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(activity.readiness()[0])
         for i in range(9):
             (self.raw / f"AVANZAMENTI_{i}.xlsx").write_bytes(b"test input")
-        self.detail.refresh()
+        self.window.status_service.refresh()
+        self.wait_until(lambda: not self.window.status_service.scanning)
         self.assertIn("9/10", self.detail.status.text())
         source = self.root / "AVANZAMENTI_9.xlsx"
         source.write_bytes(b"test input")
         with patch.object(QFileDialog, "getOpenFileNames", return_value=([str(source)], "")):
             self.detail.action.click()
+        self.window.status_service.refresh()
+        self.wait_until(lambda: activity.readiness()[0])
         self.assertTrue(activity.readiness()[0])
         self.assertEqual(self.detail.action.text(), "Esegui attività")
         (self.raw / "AVANZAMENTI_extra.xlsx").write_bytes(b"test input")
-        self.detail.refresh()
+        self.window.status_service.refresh()
+        self.wait_until(lambda: not self.window.status_service.scanning)
         self.assertFalse(activity.readiness()[0])
         self.assertIn("eccesso", self.detail.status.text())
         with patch.object(menu, "lancia_script") as launch, patch.object(
@@ -200,6 +206,7 @@ class WorkspaceTests(unittest.TestCase):
             launch.assert_not_called()
             self.detail.action.click()
             self.assertEqual(launch.call_args.args[0], activity.script)
+            self.window.status_service.states[activity.activity_id] = ActivityState(available=True)
             menu.global_signals.script_terminato.emit()
             self.assertEqual(remote.call_args.kwargs["timeout"], 40)
         with patch.object(menu.subprocess, "run", side_effect=subprocess.TimeoutExpired("check", 40)):
@@ -212,7 +219,7 @@ class WorkspaceTests(unittest.TestCase):
             self.detail.action.click()
             self.detail.set_activity(self.window.activities[0])
             self.wait_until(lambda: not self.detail.remote_checker.running)
-            self.assertEqual(self.detail.status.text(), self.window.activities[0].readiness()[1])
+            self.assertIn(self.window.activities[0].readiness()[1], self.detail.status.text())
 
     def test_terminal_real_streaming_and_persistence(self):
         terminal = self.window.terminal

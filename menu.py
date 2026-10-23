@@ -17,6 +17,7 @@ from ui_widgets import ElidedLabel
 from operational_preferences import Favorites
 from execution_service import ExecutionService
 from operations_views import HistoryPage
+from activity_status import StatusService
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
@@ -650,7 +651,6 @@ class ScriptCard(QFrame):
         self._in_esecuzione = True
         self.btn_avvia.setEnabled(False)
         self.btn_avvia.setText("In esecuzione...")
-        global_signals.script_avviato.emit()
         if scroll:
             QTimer.singleShot(0, lambda: scroll.verticalScrollBar().setValue(pos))
         lancia_script(self.script, self.terminale, on_finished=self._signals.script_finished.emit)
@@ -666,7 +666,6 @@ class ScriptCard(QFrame):
         self._in_esecuzione = False
         self.btn_avvia.setText("OK Avvia  →" if successo else "ERR Avvia  →")
         QTimer.singleShot(1500, lambda: self.btn_avvia.setText("Avvia  →"))
-        global_signals.script_terminato.emit()
 
     def _on_qualsiasi_script_avviato(self):
         if not self._in_esecuzione:
@@ -1766,7 +1765,6 @@ class WorkflowRow(QFrame):
             return
         self.running = True
         self.run_button.setText("In esecuzione")
-        global_signals.script_avviato.emit()
         lancia_script(self.script, self.terminal, self.signals.script_finished.emit)
 
     def finished(self, success):
@@ -1774,7 +1772,6 @@ class WorkflowRow(QFrame):
         self.status.setText("Completato correttamente" if success else "Terminato con errore")
         self.status.setStyleSheet(
             f"color:{C_LOG_OK if success else C_LOG_ERR}; font-size:11px; font-weight:bold;")
-        global_signals.script_terminato.emit()
 
     def lock(self):
         if not self.running:
@@ -2015,10 +2012,9 @@ class ScriptLaunchDialog(QDialog):
 
     def _run(self):
         self.accept()
-        global_signals.script_avviato.emit()
         lancia_script(
             self.tile.script, self.tile.terminal,
-            lambda success: global_signals.script_terminato.emit())
+            lambda success: None)
 
 
 def emoji_script(title):
@@ -2331,16 +2327,29 @@ class ActivitySpec:
     remote_check: str | None = None
     expected_count: int = 1
     activity_id: str = ""
+    output_validator: object = None
 
     @property
     def available(self):
+        if hasattr(self, "status_service"):
+            return self.status_service.state(self).available
         return bool(self.script and self.script.is_file())
 
     def readiness(self):
-        if not self.available:
+        if hasattr(self, "status_service"):
+            state = self.status_service.state(self)
+            return state.ready, state.message
+        if self.remote_check:
+            return False, "Verifica SharePoint richiesta prima dell'avvio."
+        return self.evaluate_requirements()
+
+    def evaluate_requirements(self):
+        if not self.script or not self.script.is_file():
             return False, "Funzione non ancora disponibile."
         if self.folder and self.filename:
-            matches = [f for f in self.folder.glob(self.filename) if f.is_file()]
+            import fnmatch
+            # iterdir surfaces access errors that Path.glob may silently suppress.
+            matches = [f for f in self.folder.iterdir() if fnmatch.fnmatch(f.name, self.filename) and f.is_file()]
             count = len(matches)
             if self.expected_count > 1:
                 if count == self.expected_count:
@@ -2406,7 +2415,13 @@ class ActivityListButton(QPushButton):
 
     def refresh_text(self, running=False):
         ready, message = self.activity.readiness()
-        if running:
+        if hasattr(self.activity, "status_service"):
+            status = self.activity.status_service.state(self.activity)
+            state = status.name
+            color = {"Pronto": Theme.SUCCESS, "File mancanti": Theme.WARNING,
+                     "Errore di verifica": "#B42332", "In esecuzione": Theme.INFO,
+                     "Verifica in corso": Theme.INFO}.get(state, Theme.MUTED)
+        elif running:
             state, color = "In esecuzione", Theme.INFO
         elif not self.activity.available:
             state, color = "Non disponibile", Theme.MUTED
@@ -2447,15 +2462,14 @@ class ActivityDetailPanel(QFrame):
     files_requested = Signal()
     add_files_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, status_service=None):
         super().__init__(parent)
         self.activity = None
         self.busy = False
         self.running_activity = None
-        self._remote_activity = None
-        self._remote_results = {}
-        self.remote_checker = SharePointCheck(self)
-        self.remote_checker.finished.connect(self._remote_finished)
+        self.status_service = status_service
+        self.remote_checker = status_service.remote_checker
+        status_service.changed.connect(self.refresh)
         self.setObjectName("detailPanel")
         self.setMinimumWidth(330)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -2529,9 +2543,6 @@ class ActivityDetailPanel(QFrame):
         root.addWidget(footer)
         global_signals.script_avviato.connect(self._script_started)
         global_signals.script_terminato.connect(self._script_finished)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(3000)
         self.set_activity(None)
 
     def set_activity(self, activity):
@@ -2540,9 +2551,6 @@ class ActivityDetailPanel(QFrame):
         self.activity_image.setVisible(activity is not None)
         if activity:
             self.activity_image.setPixmap(activity_icon(activity.activity_id).pixmap(QSize(44, 44)))
-        if changed and activity:
-            # A new selection always requires a fresh remote preflight.
-            self._remote_results.pop(activity.number, None)
         self.category.setText(activity.category.upper() if activity else "DETTAGLI ATTIVITÀ")
         self.title.setText(activity.title if activity else "Nessun risultato")
         self.description.setText(activity.description if activity else "Prova con un'altra ricerca o scegli una sezione.")
@@ -2564,7 +2572,6 @@ class ActivityDetailPanel(QFrame):
     def _script_finished(self):
         self.busy = False
         self.running_activity = None
-        self._remote_results.clear()
         self.refresh()
 
     def refresh(self):
@@ -2582,15 +2589,11 @@ class ActivityDetailPanel(QFrame):
             self.requirements.clear()
             return
         ready, message = activity.readiness()
-        checking = self.remote_checker.running and self._remote_activity is activity
-        if activity.remote_check and activity.available:
-            ready, message = self._remote_results.get(
-                activity.number, (False, "Verifica la presenza del file CB su SharePoint prima di avviare."))
-            if checking:
-                ready, message = False, "Verifica della cartella SharePoint in corso…"
+        state = self.status_service.state(activity)
+        checking = state.name == "Verifica in corso" and (not activity.remote_check or self.remote_checker.running)
         if self.busy:
             message = f"In esecuzione: {self.running_activity.title if self.running_activity else 'attività'}. Attendi il completamento."
-        self.status.setText(message)
+        self.status.setText(f"{state.name}: {message}")
         set_tone(self.status, "info" if self.busy or checking else
                  "ready" if ready else "warning" if activity.available else "muted")
         self.folder.setText(str(activity.folder) if activity.folder else "")
@@ -2617,16 +2620,7 @@ class ActivityDetailPanel(QFrame):
     def _check_remote(self):
         if self.busy or not self.activity or not self.activity.available or self.remote_checker.running:
             return
-        self._remote_activity = self.activity
-        self._remote_results.pop(self.activity.number, None)
-        self.remote_checker.start()
-        self.refresh()
-
-    @Slot(bool, str)
-    def _remote_finished(self, ready, message):
-        if self._remote_activity:
-            self._remote_results[self._remote_activity.number] = ready, message
-        self.refresh()
+        self.status_service.check_remote(self.activity)
 
     def run_or_prepare(self):
         activity = self.activity
@@ -2634,7 +2628,6 @@ class ActivityDetailPanel(QFrame):
             return
         ready, _ = activity.readiness()
         if activity.remote_check:
-            ready, _ = self._remote_results.get(activity.number, (False, ""))
             if not ready:
                 self._check_remote()
                 return
@@ -2646,7 +2639,7 @@ class ActivityDetailPanel(QFrame):
 
 
 class ModernHubPage(QWidget):
-    def __init__(self, activities, parent=None, header=None, favorites=None):
+    def __init__(self, activities, parent=None, header=None, favorites=None, status_service=None):
         super().__init__(parent)
         self.activities = activities
         self.favorites = favorites
@@ -2692,16 +2685,14 @@ class ModernHubPage(QWidget):
         self.scroll.setWidget(self.list_body)
         list_layout.addWidget(self.scroll, 1)
         self.splitter.addWidget(list_panel)
-        self.detail = ActivityDetailPanel()
+        self.detail = ActivityDetailPanel(status_service=status_service)
         self.splitter.addWidget(self.detail)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([520, 520])
         root.addWidget(self.splitter)
         self.group = QButtonGroup(self)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh_rows)
-        self.timer.start(3000)
+        status_service.changed.connect(self.refresh_rows)
         global_signals.script_avviato.connect(self.refresh_rows)
         global_signals.script_terminato.connect(self.refresh_rows)
         self.rebuild()
@@ -2826,8 +2817,15 @@ class OperationsWindow(QMainWindow):
         self.terminal.execution_service = self.execution
         self.execution.started.connect(lambda activity: global_signals.script_avviato.emit())
         self.execution.finished.connect(lambda result: global_signals.script_terminato.emit())
+        self.status_service = StatusService(self.activities, SharePointCheck(self), parent=self)
+        for activity in self.activities:
+            activity.status_service = self.status_service
+        self.execution.status_service = self.status_service
+        self.execution.started.connect(self.status_service.started)
+        self.execution.finished.connect(self.status_service.finished)
         self.favorites = Favorites([a.activity_id for a in self.activities], parent=self)
-        self.hub = ModernHubPage(self.activities, header=self.header, favorites=self.favorites)
+        self.hub = ModernHubPage(self.activities, header=self.header, favorites=self.favorites,
+                                 status_service=self.status_service)
         if self.favorites.warning:
             self.terminal.write_safe(self.favorites.warning + "\n", C_LOG_WARN)
         self.files_page = FilesPage(self.paths, self.set_raw_folder)
@@ -2944,6 +2942,7 @@ class OperationsWindow(QMainWindow):
         for activity in self.activities:
             if activity.filename:
                 activity.folder = folder
+        self.status_service.raw_changed()
         self.hub.rebuild()
 
 
