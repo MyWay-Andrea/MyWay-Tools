@@ -45,7 +45,7 @@ function Remove-File-Locali {
     param([Parameter(Mandatory = $true)][string]$Radice)
 
     $directoryEscluse = @(
-        ".git", ".hg", ".svn", "__pycache__", ".pytest_cache__", ".mypy_cache",
+        ".git", ".hg", ".svn", "__pycache__", ".pytest_cache", ".mypy_cache",
         ".ruff_cache", ".tox", ".nox", ".venv", "venv", "env", "node_modules",
         "build", "dist"
     )
