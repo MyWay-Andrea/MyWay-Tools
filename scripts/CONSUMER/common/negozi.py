@@ -24,66 +24,130 @@ PATH_SHAREPOINT = Path.home() / "My Way S.r.l"
 PATH_TEAM_CONSUMER = PATH_SHAREPOINT / "TEAM CONSUMER - TEAM CONSUMER"
 
 
-def carica_negozi() -> list[str]:
-    
-    """Restituisce l'elenco dei negozi configurati nel file JSON."""
+def leggi_negozi() -> list[dict[str, str]]:
+    """Legge e valida l'anagrafica unica dei negozi."""
 
     with FILE_NEGOZI.open("r", encoding="utf-8") as file:
         dati = json.load(file)
-        
-    
-    negozi = dati.get("negozi")
 
+    negozi = dati.get("negozi")
     if not isinstance(negozi, list):
         raise ValueError(
             f"La chiave 'negozi' in {FILE_NEGOZI} deve contenere una lista"
         )
-    
-    negozi_validi = [
-         negozio.strip() 
-         for negozio in negozi 
-         if isinstance(negozio, str) and negozio.strip()]
 
-    if not negozi_validi:
-        raise ValueError(
-             f"nessun negozio valido configurato in {FILE_NEGOZI}"
-        )
-    
+    risultato = []
+    nomi_visti = set()
+    alias_visti = set()
+    dealer_visti = set()
 
-    return negozi_validi
+    for posizione, negozio in enumerate(negozi, start=1):
+        if not isinstance(negozio, dict):
+            raise ValueError(
+                f"Il negozio in posizione {posizione} in {FILE_NEGOZI} "
+                "deve essere un dizionario"
+            )
+
+        nome = negozio.get("nome")
+        alias = negozio.get("alias")
+        codice_dealer = negozio.get("codice_dealer")
+        nomi_storici = negozio.get("nomi_storici", [])
+
+        if not isinstance(nome, str) or not nome.strip():
+            raise ValueError(f"Nome negozio non valido in {FILE_NEGOZI}: {nome!r}")
+        if not isinstance(alias, str) or not alias.strip():
+            raise ValueError(
+                f"Alias non valido per il negozio {nome!r} in {FILE_NEGOZI}"
+            )
+        if codice_dealer is not None and (
+            not isinstance(codice_dealer, str) or not codice_dealer.strip()
+        ):
+            raise ValueError(
+                f"Codice dealer non valido per il negozio {nome!r} in {FILE_NEGOZI}"
+            )
+        if not isinstance(nomi_storici, list) or any(
+            not isinstance(valore, str) or not valore.strip()
+            for valore in nomi_storici
+        ):
+            raise ValueError(
+                f"Nomi storici non validi per il negozio {nome!r} in {FILE_NEGOZI}"
+            )
+
+        record = {
+            "nome": nome.strip().upper(),
+            "alias": alias.strip().upper(),
+        }
+        if codice_dealer is not None:
+            record["codice_dealer"] = codice_dealer.strip().upper()
+        if nomi_storici:
+            record["nomi_storici"] = [valore.strip() for valore in nomi_storici]
+
+        if record["nome"] in nomi_visti:
+            raise ValueError(f"Nome negozio duplicato: {record['nome']}")
+        if record["alias"] in alias_visti:
+            raise ValueError(f"Alias negozio duplicato: {record['alias']}")
+        if record.get("codice_dealer") in dealer_visti:
+            raise ValueError(f"Codice dealer duplicato: {record['codice_dealer']}")
+
+        nomi_visti.add(record["nome"])
+        alias_visti.add(record["alias"])
+        if "codice_dealer" in record:
+            dealer_visti.add(record["codice_dealer"])
+        risultato.append(record)
+
+    if not risultato:
+        raise ValueError(f"Nessun negozio valido configurato in {FILE_NEGOZI}")
+
+    return risultato
+
+
+def carica_negozi() -> list[str]:
+    """Restituisce, nell'ordine configurato, i nomi dei negozi."""
+
+    return [negozio["nome"] for negozio in leggi_negozi()]
 
 
 def carica_codici_negozi() -> dict[str, str]:
-    """Restituisce la corrispondenza tra codice colonna e nome negozio."""
+    """Restituisce la corrispondenza alias-nome negozio."""
 
-    with FILE_NEGOZI.open("r", encoding="utf-8") as file:
-        dati = json.load(file)
+    return {negozio["alias"]: negozio["nome"] for negozio in leggi_negozi()}
 
-    codici_negozi = dati.get("codici_negozi")
 
-    if not isinstance(codici_negozi, dict):
-        raise ValueError(
-            f"La chiave 'codici_negozi' in {FILE_NEGOZI} "
-            "deve contenere un dizionario"
-        )
+def carica_codici_dealer_pedonalita() -> dict[str, str]:
+    """Restituisce la corrispondenza tra codice dealer e sede pedonalita."""
 
     codici_validi = {
-        codice.strip().upper(): negozio.strip().upper()
-        for codice, negozio in codici_negozi.items()
-        if (
-            isinstance(codice, str)
-            and codice.strip()
-            and isinstance(negozio, str)
-            and negozio.strip()
-        )
+        negozio["codice_dealer"]: negozio["nome"]
+        for negozio in leggi_negozi()
+        if "codice_dealer" in negozio
     }
 
     if not codici_validi:
         raise ValueError(
-            f"Nessun codice negozio valido configurato in {FILE_NEGOZI}"
+            f"Nessun codice dealer valido configurato in {FILE_NEGOZI}"
         )
 
     return codici_validi
+
+
+def normalizza_nomi_negozi(df: pd.DataFrame) -> pd.DataFrame:
+    """Converte nel nome canonico gli eventuali nomi negozio storici."""
+
+    if "Negozio" not in df.columns:
+        raise ValueError("Colonna 'Negozio' non presente nel dataframe")
+
+    mappa = {}
+    for negozio in leggi_negozi():
+        nome = negozio["nome"]
+        mappa[nome.casefold()] = nome
+        for nome_storico in negozio.get("nomi_storici", []):
+            mappa[nome_storico.casefold()] = nome
+
+    risultato = df.copy()
+    valori = risultato["Negozio"].astype("string").str.strip()
+    nomi_normalizzati = valori.str.casefold().map(mappa)
+    risultato["Negozio"] = valori.where(nomi_normalizzati.isna(), nomi_normalizzati)
+    return risultato
 
 
 

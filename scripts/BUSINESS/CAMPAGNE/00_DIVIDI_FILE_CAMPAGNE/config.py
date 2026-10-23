@@ -1,117 +1,206 @@
+"""Configurazione e accesso SharePoint per la divisione delle campagne."""
+
+from __future__ import annotations
+
+import os
+import sys
+from copy import copy
 from pathlib import Path
-from copy import copy 
-import shutil
-from colorama import Fore, init
-init(autoreset = True)
-from pathlib import Path
-PATH_HOME = Path.home()
 
-#PERCORSI
-CARTELLA_RAW_FILE = PATH_HOME / "My Way S.r.l" / "00_SCAMBIO DOCUMENTI - 00_SCAMBIO DOCUMENTI" / "CAMPAGNA"
+BUSINESS_DIR = Path(__file__).resolve().parents[2]
+SCRIPT_ROOT = BUSINESS_DIR.parent
+for directory in (SCRIPT_ROOT, BUSINESS_DIR):
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
+
+from common.venditori import leggi_venditori
+from graph_sharepoint import GraphSharePointClient
+
+SHAREPOINT_HOSTNAME = os.getenv("SHAREPOINT_HOSTNAME", "").strip()
+SHAREPOINT_SCAMBIO_SITE_PATH = os.getenv("SHAREPOINT_SCAMBIO_SITE_PATH", "").strip()
+SHAREPOINT_SCAMBIO_LIBRARY_NAME = os.getenv("SHAREPOINT_SCAMBIO_LIBRARY_NAME", "").strip()
+PATH_CAMPAGNE_REMOTO = os.getenv(
+    "SHAREPOINT_BUSINESS_CAMPAGNE_FOLDER",
+    "00_SCAMBIO DOCUMENTI/00_BUSINESS/CAMPAGNA",
+).strip(" /")
+PATH_OUTPUT_TEST = Path(__file__).resolve().parent / "OUTPUT_TEST"
+
+_GRAPH_CLIENT = None
+_DRIVE_SCAMBIO_ID = None
+_DRIVE_VENDITORI = {}
 
 
-ONEDRIVE_VENDITORI = {
-    "Agalliu Eduart"    : PATH_HOME / "My Way S.r.l" / "BUSINESS - AGALLIU - Eduart Agalliu" / "CAMPAGNE - DOCUMENTI",
-    "Milani Alberto"    : PATH_HOME / "My Way S.r.l" / "BUSINESS - MILANI - Alberto Milani" / "CAMPAGNE - DOCUMENTI",
-    "Demelas Mario"     : PATH_HOME / "My Way S.r.l" / "BUSINESS - DEMELAS - Mario Demelas" / "CAMPAGNE - DOCUMENTI",
-    "Marra Giovanni"    : PATH_HOME / "My Way S.r.l" / "BUSINESS - MARRA - Giovanni Marra" / "CAMPAGNE - DOCUMENTI",
-    "Carugo Danilo"     : PATH_HOME / "My Way S.r.l" / "BUSINESS - CARUGO - Danilo Carugo" / "CAMPAGNE - DOCUMENTI",
-    "Gnani Doriano"     : PATH_HOME / "My Way S.r.l" / "BUSINESS - GNANI - Doriano Gnani" / "CAMPAGNE - DOCUMENTI",
-    "Pignatta Enrico"   : PATH_HOME / "My Way S.r.l" / "BUSINESS - PIGNATTA - Enrico Pignatta" / "CAMPAGNE - DOCUMENTI",
-    "Sala Mauro"        : PATH_HOME / "My Way S.r.l" / "BUSINESS - SALA - Mauro Sala" / "CAMPAGNE - DOCUMENTI",
-    "Scimone Riccardo"  : PATH_HOME / "My Way S.r.l" / "BUSINESS - SCIMONE - Riccardo Scimone" / "CAMPAGNE - DOCUMENTI",
-    "CRM My Way"        : [PATH_HOME / "My Way S.r.l" / "BUSINESS - MATTAINI - Luca Mattaini" / "CAMPAGNE - DOCUMENTI",
-                            PATH_HOME / "My Way S.r.l" / "BUSINESS - FEBBO - Cinzia Febbo" / "CAMPAGNE - DOCUMENTI"],
-    "Arlotta Fabio"     : PATH_HOME / "My Way S.r.l" / "BUSINESS - ARLOTTA - Fabio Arlotta" / "AGENDA - PERFORMANCE",
-    "Mandelli Giorgio"  : PATH_HOME / "My Way S.r.l" / "BUSINESS - MANDELLI - Giorgio Mandelli" / "BUSINESS" / "CAMPAGNE - DOCUMENTI"
-}
+def _client_graph():
+    global _GRAPH_CLIENT
+    if _GRAPH_CLIENT is None:
+        _GRAPH_CLIENT = GraphSharePointClient()
+    return _GRAPH_CLIENT
 
-#trova file campagne nella cartella 00_SCAMBIO DOCUMENTI / CAMPAGNA  / ...
-def converti_xls_in_xlsx(cartella):
-    file_xls = [
-        file
-        for file in cartella.glob("*.xls")
-        if not file.name.startswith("~$")
+
+def _drive_scambio():
+    global _DRIVE_SCAMBIO_ID
+    configurazione = {
+        "SHAREPOINT_HOSTNAME": SHAREPOINT_HOSTNAME,
+        "SHAREPOINT_SCAMBIO_SITE_PATH": SHAREPOINT_SCAMBIO_SITE_PATH,
+        "SHAREPOINT_SCAMBIO_LIBRARY_NAME": SHAREPOINT_SCAMBIO_LIBRARY_NAME,
+        "SHAREPOINT_BUSINESS_CAMPAGNE_FOLDER": PATH_CAMPAGNE_REMOTO,
+    }
+    mancanti = [nome for nome, valore in configurazione.items() if not valore]
+    if mancanti:
+        raise ValueError("Configurazione SharePoint campagne incompleta: " + ", ".join(mancanti))
+    if _DRIVE_SCAMBIO_ID is None:
+        client = _client_graph()
+        sito = client.trova_sito(SHAREPOINT_HOSTNAME, SHAREPOINT_SCAMBIO_SITE_PATH)
+        raccolta = client.trova_raccolta_documenti(sito["id"], SHAREPOINT_SCAMBIO_LIBRARY_NAME)
+        _DRIVE_SCAMBIO_ID = str(raccolta["id"])
+    return _client_graph(), _DRIVE_SCAMBIO_ID
+
+
+def trova_cartella_campagna_remota() -> str:
+    """Trova la sottocartella con prefisso numerico piu alto."""
+    client, drive_id = _drive_scambio()
+    valide = []
+    for elemento in client.elenca_elementi_cartella(drive_id, PATH_CAMPAGNE_REMOTO):
+        if elemento.get("folder") is None:
+            continue
+        nome = str(elemento.get("name", ""))
+        try:
+            ordine = int(nome[:2])
+        except ValueError:
+            continue
+        valide.append((ordine, nome))
+    if not valide:
+        raise FileNotFoundError(
+            f"Nessuna sottocartella numerata trovata in {PATH_CAMPAGNE_REMOTO}"
+        )
+    _, nome = max(valide, key=lambda voce: (voce[0], voce[1]))
+    return f"{PATH_CAMPAGNE_REMOTO}/{nome}"
+
+
+def scarica_file_campagna(cartella_locale: Path) -> tuple[str, list[Path]]:
+    """Scarica gli Excel presenti nell'ultima campagna SharePoint."""
+    client, drive_id = _drive_scambio()
+    cartella_remota = trova_cartella_campagna_remota()
+    files = [
+        file for file in client.elenca_file_cartella(drive_id, cartella_remota)
+        if str(file.get("name", "")).casefold().endswith((".xlsx", ".xls"))
+        and not str(file.get("name", "")).startswith("~$")
     ]
-
-    if not file_xls:
-        return
-
-    import win32com.client
-
-    excel = win32com.client.Dispatch("Excel.Application")
-    excel.Visible = False
-    excel.DisplayAlerts = False
-
-    try:
-        for file in file_xls:
-            destinazione = file.with_suffix(".xlsx")
-            workbook = excel.Workbooks.Open(str(file.resolve()))
-            try:
-                workbook.SaveAs(str(destinazione.resolve()), FileFormat=51)
-            finally:
-                workbook.Close(False)
-
-            if destinazione.exists():
-                file.unlink()
-                print(Fore.GREEN + f"Convertito in xlsx: {destinazione.name}")
-    finally:
-        excel.Quit()
+    if not files:
+        raise FileNotFoundError(f"Nessun file Excel trovato in SharePoint: {cartella_remota}")
+    cartella_locale.mkdir(parents=True, exist_ok=True)
+    locali = []
+    for file in files:
+        locale = cartella_locale / str(file["name"])
+        locale.write_bytes(client.scarica_file(drive_id, str(file["id"])))
+        locali.append(locale)
+    return cartella_remota, locali
 
 
-def trova_raw_file(path_cartella):
-    ESTENSIONI = ["*.xlsx"]
-    sottocartelle = sorted(
-        path_cartella.iterdir(),
-        key=lambda p: int(p.name[:2])
-    )
-    
-    cartella_corretta = sottocartelle[-1]
-
-    print(cartella_corretta)
+def _normalizza_alias(valore: str) -> str:
+    return " ".join(valore.casefold().replace(",", " ").split(" - ", 1)[0].split())
 
 
-    converti_xls_in_xlsx(cartella_corretta)
-
-    file_trovati = [
-        file
-        for ext in ESTENSIONI
-        for file in cartella_corretta.glob(ext)
-        if not file.name.startswith("~$")
-    ]
-
-    return Path(cartella_corretta), file_trovati
-
-
-def elimina_carica_campagna_agente_teams(agente, file_pronto, venditori_path):
-
-    if agente not in venditori_path:
-        print(f"Agente non trovato: {agente}")
-        return
-
-    # 1. trova percorso agente
-    destinazioni = venditori_path[agente]
+def trova_venditore(nome_agente: str) -> dict | None:
+    """Risolve il testo Agente usando gli alias_cb del catalogo JSON."""
+    cercato = _normalizza_alias(nome_agente)
+    corrispondenze = []
+    for venditore in leggi_venditori():
+        alias = {_normalizza_alias(str(voce)) for voce in venditore.get("alias_cb", [])}
+        alias.add(_normalizza_alias(str(venditore["nome_crm"])))
+        if cercato in alias:
+            corrispondenze.append(venditore)
+    if len(corrispondenze) > 1:
+        nomi = ", ".join(str(v["nome_crm"]) for v in corrispondenze)
+        raise ValueError(f"Alias agente ambiguo {nome_agente!r}: {nomi}")
+    return corrispondenze[0] if corrispondenze else None
 
 
-    # Se è una singola path → trasformala in lista
-    if not isinstance(destinazioni, list):
-        destinazioni = [destinazioni]
+def _destinazioni_venditore(venditore: dict) -> list[dict]:
+    destinazioni = venditore.get("sharepoint_campagne_destinations")
+    if destinazioni:
+        return list(destinazioni)
+    richiesti = ("sharepoint_site_path", "sharepoint_library", "sharepoint_campagne_folder")
+    mancanti = [campo for campo in richiesti if not venditore.get(campo)]
+    if mancanti:
+        raise ValueError(
+            f"Destinazione campagne non configurata per {venditore['nome_crm']}: "
+            + ", ".join(mancanti)
+        )
+    return [{campo: venditore[campo] for campo in richiesti}]
 
 
-    for path in destinazioni:
-        for file in path.glob("*CAMPAGNA*"):
-            if file.is_file():
-                file.unlink()
+def _drive_venditore(destinazione: dict):
+    site_path = str(destinazione["sharepoint_site_path"])
+    library = str(destinazione["sharepoint_library"])
+    chiave = (site_path, library)
+    if chiave not in _DRIVE_VENDITORI:
+        client = _client_graph()
+        sito = client.trova_sito(SHAREPOINT_HOSTNAME, site_path)
+        raccolta = client.trova_raccolta_documenti(sito["id"], library)
+        _DRIVE_VENDITORI[chiave] = str(raccolta["id"])
+    return _client_graph(), _DRIVE_VENDITORI[chiave]
 
-        # . salvataggio file di riferimento
-        dest = path / file_pronto.name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(file_pronto, dest)
-        print(Fore.GREEN + f"{agente} salvato su Temas")
+
+def pubblica_campagna(venditore: dict, file_locale: Path, *, test: bool) -> None:
+    """Sostituisce i file CAMPAGNA del venditore, o descrive l'azione in TEST."""
+    for destinazione in _destinazioni_venditore(venditore):
+        cartella = str(destinazione["sharepoint_campagne_folder"])
+        etichetta = f"{destinazione['sharepoint_site_path']} / {cartella}"
+        if test:
+            print(f"  [TEST] Caricherebbe {file_locale.name} in {etichetta}")
+            continue
+        client, drive_id = _drive_venditore(destinazione)
+        esistenti = client.elenca_file_cartella(drive_id, cartella, crea=True)
+        for remoto in esistenti:
+            if "campagna" in str(remoto.get("name", "")).casefold():
+                client.elimina_file(drive_id, str(remoto["id"]), str(remoto.get("eTag", "")))
+        client.carica_bytes(
+            drive_id,
+            cartella,
+            file_locale.name,
+            file_locale.read_bytes(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        print(f"  OK Pubblicato in {etichetta}")
 
 
-#FUNZIONI PER CREAZIONE FOGLI 
-#----------------------------------------------------------------------------
+def pubblica_campagne_divise(
+    files_locali: list[Path],
+    cartella_campagna: str,
+    *,
+    test: bool,
+) -> str:
+    """Salva tutti gli output nella sottocartella centrale CAMPAGNE_DIVISE."""
+    destinazione = f"{cartella_campagna.rstrip('/')}/CAMPAGNE_DIVISE"
+    if test:
+        print(f"\n[TEST] Cartella centrale: {destinazione}")
+        for file in files_locali:
+            print(f"  [TEST] Caricherebbe {file.name}")
+        return destinazione
+
+    client, drive_id = _drive_scambio()
+    esistenti = client.elenca_file_cartella(drive_id, destinazione, crea=True)
+    for remoto in esistenti:
+        if str(remoto.get("name", "")).casefold().endswith(".xlsx"):
+            client.elimina_file(
+                drive_id, str(remoto["id"]), str(remoto.get("eTag", ""))
+            )
+    for file in files_locali:
+        client.carica_bytes(
+            drive_id,
+            destinazione,
+            file.name,
+            file.read_bytes(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        )
+    print(f"\nOK {len(files_locali)} file salvati in {destinazione}")
+    return destinazione
+
+
 def copia_stile_cella(cella_origine, cella_destinazione):
     if cella_origine.has_style:
         cella_destinazione.font = copy(cella_origine.font)
@@ -120,4 +209,3 @@ def copia_stile_cella(cella_origine, cella_destinazione):
         cella_destinazione.number_format = copy(cella_origine.number_format)
         cella_destinazione.protection = copy(cella_origine.protection)
         cella_destinazione.alignment = copy(cella_origine.alignment)
-

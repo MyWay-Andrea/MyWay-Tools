@@ -25,6 +25,7 @@ $cartelle = @(
     "BUSINESS\12_FCST_BUSINESS",
     "BUSINESS\13_ESTRAI_FILE_GARA",
     "BUSINESS\14_ELABORA_CB",
+    "BUSINESS\15_PERFORMANCE_MANAGEMENT_CRM",
     "BUSINESS\CAMPAGNE",
     "CONSUMER\common",
     "CONSUMER\config",
@@ -62,7 +63,15 @@ try {
         $sorgente = Join-Path $origineRisolta $cartella
         $target = Join-Path $temporanea $cartella
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
-        Copy-Item -LiteralPath $sorgente -Destination $target -Recurse -Force
+        if ($cartella -eq "BUSINESS\15_PERFORMANCE_MANAGEMENT_CRM") {
+            New-Item -ItemType Directory -Path $target -Force | Out-Null
+            Get-ChildItem -LiteralPath $sorgente -Force |
+                Where-Object { $_.Name -notin @("node_modules", "output", "tests") } |
+                Copy-Item -Destination $target -Recurse -Force
+        }
+        else {
+            Copy-Item -LiteralPath $sorgente -Destination $target -Recurse -Force
+        }
     }
     foreach ($file in $fileCondivisi) {
         Copy-Item -LiteralPath (Join-Path $origineRisolta $file) -Destination (Join-Path $temporanea $file) -Force
@@ -74,6 +83,14 @@ try {
         "BUSINESS\10_ESTRAZIONE_OPP_API\prova.py",
         "BUSINESS\14_ELABORA_CB\estrai_anagrafica_crm_json.py",
         "BUSINESS\14_ELABORA_CB\ISTRUZIONI_EXCHANGE_APP_RBAC_REPORTISTICA.html",
+        "BUSINESS\15_PERFORMANCE_MANAGEMENT_CRM\node_modules",
+        "BUSINESS\15_PERFORMANCE_MANAGEMENT_CRM\output",
+        "BUSINESS\15_PERFORMANCE_MANAGEMENT_CRM\tests",
+        "BUSINESS\15_PERFORMANCE_MANAGEMENT_CRM\invia_test.py",
+        "BUSINESS\15_PERFORMANCE_MANAGEMENT_CRM\CONTESTO_PIPELINE_PERFORMANCE_CRM.md",
+        "BUSINESS\CAMPAGNE\00_DIVIDI_FILE_CAMPAGNE\OUTPUT_TEST",
+        "CONSUMER\02_REPORT_PEDONALITA\report",
+        "CONSUMER\12_CRUSCOTTO_PISTA_CONSUMER\test_leggi_file_raw.py",
         "CONSUMER\02_REPORT_PEDONALITA\script\calcolaW-n.py"
     ) | ForEach-Object {
         $elemento = Join-Path $temporanea $_

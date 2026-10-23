@@ -193,12 +193,49 @@ class GraphSharePointClient:
             elementi = risposta.get("value", [])
         return [elemento for elemento in elementi if elemento.get("file")]
 
+    def elenca_elementi_cartella(
+        self, drive_id: str, percorso_cartella: str
+    ) -> list[dict[str, Any]]:
+        """Elenca file e sottocartelle di un percorso della raccolta."""
+        percorso = quote(percorso_cartella.strip("/"), safe="/")
+        url: str | None = f"/drives/{drive_id}/root:/{percorso}:/children"
+        elementi: list[dict[str, Any]] = []
+        while url:
+            risposta = self._richiesta(
+                "GET",
+                url,
+                params={
+                    "$select": "id,name,size,eTag,lastModifiedDateTime,file,folder,webUrl,parentReference",
+                    "$top": "200",
+                } if not url.startswith("https://") else None,
+            ).json()
+            elementi.extend(risposta.get("value", []))
+            url = risposta.get("@odata.nextLink")
+        return elementi
+
     def scarica_file(self, drive_id: str, item_id: str) -> bytes:
         return self._richiesta(
             "GET",
             f"/drives/{drive_id}/items/{quote(item_id, safe='')}/content",
             timeout=180,
         ).content
+
+    def ottieni_metadati_elemento(
+        self,
+        drive_id: str,
+        item_id: str,
+    ) -> dict[str, Any]:
+        """Restituisce i metadati completi, incluso il percorso del genitore."""
+        return self._richiesta(
+            "GET",
+            f"/drives/{drive_id}/items/{quote(item_id, safe='')}",
+            params={
+                "$select": (
+                    "id,name,size,eTag,lastModifiedDateTime,file,webUrl,"
+                    "parentReference"
+                )
+            },
+        ).json()
 
     def elimina_file(self, drive_id: str, item_id: str, etag: str) -> None:
         """Elimina un elemento solo se non e' cambiato rispetto all'eTag letto."""

@@ -1,0 +1,11 @@
+{
+  "name": "performance-management-crm-email",
+  "private": true,
+  "description": "Compilazione locale dei template email MJML",
+  "scripts": {
+    "mjml:check": "mjml --version"
+  },
+  "dependencies": {
+    "mjml": "5.4.1"
+  }
+}

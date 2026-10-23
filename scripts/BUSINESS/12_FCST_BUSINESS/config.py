@@ -21,6 +21,17 @@ SHAREPOINT_SCAMBIO_LIBRARY_NAME = os.getenv("SHAREPOINT_SCAMBIO_LIBRARY_NAME", "
 PATH_INPUT_PARQUET = os.getenv("SHAREPOINT_SCAMBIO_PARQUET_FOLDER", "").strip(" /")
 PATH_OUTPUT_FCST = "siti SharePoint personali dei venditori"
 CATALOGO_VENDITORI = BUSINESS_DIR / "config" / "venditori.json"
+GRAPH_CLIENT_ID = os.getenv("GRAPH_CLIENT_ID", "").strip()
+GRAPH_TENANT_ID = os.getenv("GRAPH_TENANT_ID", "").strip()
+GRAPH_CLIENT_SECRET = os.getenv("GRAPH_CLIENT_SECRET", "").strip()
+GRAPH_SENDER_EMAIL = os.getenv("GRAPH_SENDER_EMAIL", "").strip()
+FCST_EMAIL_DESTINATARI = [
+    indirizzo.strip()
+    for indirizzo in os.getenv(
+        "FCST_EMAIL_DESTINATARI", "g.mandelli@mywaysrl.it"
+    ).split(";")
+    if indirizzo.strip()
+]
 
 RICERCA_FILES = ["gara", "opportunita", "appuntamenti"]
 PERIODO_GARE = {
@@ -38,6 +49,27 @@ MESI_IT = {
 _GRAPH_CLIENT = None
 _DRIVE_SCAMBIO_ID = None
 _DRIVE_VENDITORI = {}
+
+
+def carica_nomi_venditori() -> list[str]:
+    """Restituisce i nomi CRM configurati nel catalogo venditori."""
+    dati = json.loads(CATALOGO_VENDITORI.read_text(encoding="utf-8"))
+    venditori = dati.get("venditori")
+    if not isinstance(venditori, list):
+        raise ValueError(
+            f"La chiave 'venditori' in {CATALOGO_VENDITORI} deve contenere una lista"
+        )
+
+    nomi = []
+    for venditore in venditori:
+        nome = str(venditore.get("nome_crm", "")).strip()
+        if not nome:
+            raise ValueError(
+                f"Ogni venditore in {CATALOGO_VENDITORI} deve avere il campo 'nome_crm'"
+            )
+        nomi.append(nome)
+
+    return nomi
 
 
 def _client_graph():
@@ -136,3 +168,7 @@ def trova_periodo_gara():
     else:
         mesi = [10, 11, 12]
     return anno, mesi, gara_corrente
+
+
+#TARGET DI GARA CHE DEVE ESSERE CAMBIATO OGNI GARA
+TARGET_GARA = 21300

@@ -41,6 +41,7 @@ def _drive_sharepoint():
         raise ValueError("Configurazione SharePoint Pedonalita incompleta: " + ", ".join(mancanti))
     if _GRAPH_CLIENT is None:
         _GRAPH_CLIENT = GraphSharePointClient()
+    if _GRAPH_DRIVE_ID is None:
         sito = _GRAPH_CLIENT.trova_sito(SHAREPOINT_HOSTNAME, SHAREPOINT_SCAMBIO_SITE_PATH)
         raccolta = _GRAPH_CLIENT.trova_raccolta_documenti(
             sito["id"], SHAREPOINT_SCAMBIO_LIBRARY_NAME
@@ -137,17 +138,6 @@ def trova_file(path_cartelle):
 #PREPARA PEDONALITA
 #-------------------------------------------------------------------------
 
-
-NEGOZIO_CONDITION = {
-    "28657.0W021" : "Fidenza",
-    "28657.0W022" : "Piacenza Galassia",
-    "28657.0W100" : "Parma Torri",
-    "28657.0W101" : "Parma Eurosia",
-    "28657.0W409" : "Modena",
-    "28657.0W728" : "Sassuolo",
-    "28657.0X132" : "Carpi",
-    "28657.0Z889" : "Piacenza Centro"
-}
 
 COLONNE_ORDINATE = ["Negozio", "Data", "Ora", "Giorno","Giorno_num", "Fascia oraria", "Presenze"]
 

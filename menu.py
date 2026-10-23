@@ -60,6 +60,7 @@ _REL_PATHS = {
     # BUSINESS
     "ESTRAI_FILE_GARA"          : "BUSINESS/13_ESTRAI_FILE_GARA/ESTRAI_FILE_GARA.py",
     "ELABORA_CB"                : "BUSINESS/14_ELABORA_CB/main.py",
+    "PERFORMANCE_MANAGEMENT_CRM": "BUSINESS/15_PERFORMANCE_MANAGEMENT_CRM/main.py",
     "FCST"                      : "BUSINESS/12_FCST_BUSINESS/crea_report_aggregato.py",
     "APPUNTAMENTI_SETTIMANA"    : "BUSINESS/02_(OLD)_APPUNTAMENTI_SETTIMANA/script/ESTRAI_APPUNTMANETI_SETTIMANA.py",
         #altri script
@@ -429,6 +430,8 @@ class RemoteCheckSignals(QObject):
 # TERMINALE WIDGET
 # ─────────────────────────────────────────────────────────────
 class TerminaleWidget(QFrame):
+    collapsed_changed = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._collapsed = False
@@ -494,7 +497,8 @@ class TerminaleWidget(QFrame):
     @Slot()
     def script_started(self):
         self.state.setText("In esecuzione")
-        self.set_collapsed(False)
+        if getattr(getattr(self, "execution_service", None), "workflow_owner", None) is None:
+            self.set_collapsed(False)
 
     @Slot()
     def script_finished(self):
@@ -516,6 +520,7 @@ class TerminaleWidget(QFrame):
             total = max(sum(splitter.sizes()), splitter.height() - splitter.handleWidth())
             height = Theme.TERMINAL_HEADER if collapsed else min(self._expanded_height, max(140, total // 2))
             splitter.setSizes([max(1, total - height), height])
+        self.collapsed_changed.emit(collapsed)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1082,7 +1087,7 @@ class Sidebar(QFrame):
 
         home_sottovoci        = [] if pagina_attiva == "main" else None
         giornalieri_sottovoci = [
-            ("Business",          ["Estrai file gara", "FCST", "Appuntamenti"]),
+            ("Business",          ["Estrai file gara", "FCST", "Appuntamenti", "Performance Management CRM"]),
             ("Consumer / Negozi", ["Formatta pedonalità", "Cruscotto Tracciamento", "Cruscotto Giornaliero"]),
         ] if pagina_attiva == "giornalieri" else None
         campagne_sottovoci    = [
@@ -1319,16 +1324,22 @@ class PaginaGiornalieri(QWidget):
             {"icona": "📅", "titolo": "3. Appuntamenti",
              "desc": "Creazione report appuntamenti della settimana corrente per venditore",
              "script": paths["APPUNTAMENTI_SETTIMANA"]},
+            {"icona": "📈", "titolo": "4. Performance Management CRM",
+             "desc": "Genera le anteprime giornaliere delle azioni CRM da completare per ciascun commerciale.",
+             "script": paths["PERFORMANCE_MANAGEMENT_CRM"]},
         ]
-        grid.setRowMinimumHeight(row, CARD_HEIGHT_STATUS + 16)
+        business_start_row = row
         for i, cfg in enumerate(cards_business):
+            card_row = business_start_row + i // 3
+            card_column = i % 3
+            grid.setRowMinimumHeight(card_row, CARD_HEIGHT_STATUS + 16)
             card = ScriptCard(cfg["icona"], cfg["titolo"], cfg["desc"], cfg["script"], terminale,
                               cartella=cfg.get("cartella"), nomi_file=cfg.get("nomi_file"))
             wrapper = QWidget(); wrapper.setStyleSheet("background:transparent;")
-            w_lay = QVBoxLayout(wrapper); w_lay.setContentsMargins(0 if i == 0 else 8, 0, 0 if i == len(cards_business)-1 else 8, 0); w_lay.setSpacing(0)
+            w_lay = QVBoxLayout(wrapper); w_lay.setContentsMargins(0 if card_column == 0 else 8, 0, 0 if card_column == 2 else 8, 0); w_lay.setSpacing(0)
             w_lay.addWidget(card, alignment=Qt.AlignTop)
-            grid.addWidget(wrapper, row, i * 4, 1, 4)
-        row += 1
+            grid.addWidget(wrapper, card_row, card_column * 4, 1, 4)
+        row += (len(cards_business) + 2) // 3
         grid.addWidget(crea_section_label("Consumer / Negozi"), row, 0, 1, 12); row += 1
         cards_consumer = [
             {"icona": "🗂️", "titolo": "1. Formatta pedonalità",
@@ -2871,6 +2882,7 @@ class OperationsWindow(QMainWindow):
         self.history_page.history_cleared.connect(self.summary_page.refresh)
         self.history_page.history_cleared.connect(self.workflow_page.load_recent)
         self.workflow_manager.changed.connect(self._execution_changed)
+        self.workflow_manager.finished.connect(lambda _: self.terminal.state.setText("Pronto"))
         self.execution.finished.connect(self.history_page.refresh)
         self.terminal.btn_stop = QPushButton("Interrompi")
         self.terminal.btn_stop.setEnabled(False)
@@ -2927,6 +2939,7 @@ class OperationsWindow(QMainWindow):
             ("Estrai file gara", "Estrae, formatta e pubblica gara, opportunità e appuntamenti.", "Business", p["ESTRAI_FILE_GARA"]),
             ("Forecast Business", "Genera il forecast giornaliero e la reportistica associata.", "Business", p["FCST"]),
             ("Appuntamenti settimanali", "Prepara il report settimanale per ciascun venditore.", "Business", p["APPUNTAMENTI_SETTIMANA"]),
+            ("Performance Management CRM", "Genera le anteprime giornaliere delle azioni CRM da completare per ciascun commerciale.", "Business", p["PERFORMANCE_MANAGEMENT_CRM"]),
             ("Elabora CB", "Analizza consistenze, anagrafiche e produce il report CB.", "Business", p["ELABORA_CB"], None, None, "Inserisci la nuova CB in 00_SCAMBIO_DOCUMENTI > 00_BUSINESS > CB > 00_DA_ELABORARE.", "sharepoint_cb"),
             ("Formatta pedonalità", "Prepara il file pedonalità per le elaborazioni.", "Consumer", p["FORMATTA_PEDONALITA"], p["RAW_FILES"], "Giorgio Mandelli*.xlsx", "Scarica il file dal portale Vodafone e inseriscilo nella cartella RAW_FILE."),
             ("Cruscotto tracciamento", "Aggrega Business, Energia e Gadget per il monitoraggio negozi.", "Consumer", p["CRUSCOTTO_TRACCIAMENTO"]),
@@ -2947,7 +2960,8 @@ class OperationsWindow(QMainWindow):
         # IDs are permanent domain keys, independent of display order and titles.
         ids_by_script_key = {
             "ESTRAI_FILE_GARA": "estrai_file_gara", "FCST": "forecast_business",
-            "APPUNTAMENTI_SETTIMANA": "appuntamenti_settimanali", "ELABORA_CB": "elabora_cb",
+            "APPUNTAMENTI_SETTIMANA": "appuntamenti_settimanali", "PERFORMANCE_MANAGEMENT_CRM": "performance_management_crm",
+            "ELABORA_CB": "elabora_cb",
             "FORMATTA_PEDONALITA": "formatta_pedonalita", "CRUSCOTTO_TRACCIAMENTO": "cruscotto_tracciamento",
             "CRUSCOTTO_GIORNALIERO": "cruscotto_giornaliero", "REPORT_GIACENZE_SMARTPHONE": "giacenze_smartphone",
             "DIVIDI_FILE_CAMPAGNE": "dividi_file_campagne", "AGGREGA_FILE_VENDITORI": "aggrega_file_venditori",

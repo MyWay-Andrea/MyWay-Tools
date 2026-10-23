@@ -34,10 +34,13 @@ sys.path.insert(1, str(CARTELLA_CONSUMER))
 from common.negozi import carica_codici_negozi, carica_negozi
 from config import (
     NOME_FILE_OUTPUT,
+    NOME_FILE_DETTAGLIO_SMARTPHONE,
+    NOME_FOGLIO_DETTAGLIO_SMARTPHONE,
     NOME_FOGLIO_OUTPUT,
     NOMI_MESI,
     PAROLE_CHIAVE_PISTE,
     PISTE_ATTESE,
+    PISTE_ATTESE_PER_TIPO,
     SHAREPOINT_HOSTNAME,
     SHAREPOINT_LIBRARY_NAME,
     SHAREPOINT_OUTPUT_FOLDER,
@@ -50,7 +53,7 @@ from config import (
     TEST_OUTPUT_FOLDER,
     TIPI_DATO_ATTESI,
 )
-from leggi_file_raw import leggi_tutti_file_raw
+from leggi_file_raw import leggi_dettaglio_smartphone, leggi_tutti_file_raw
 from invia_email import invia_report
 
 CARTELLA_SCRIPT_GENERALE = CARTELLA_CONSUMER.parent
@@ -62,28 +65,42 @@ sys.modules.pop("graph_sharepoint", None)
 from graph_sharepoint import GraphSharePointClient
 
 
-def _cerca_file_avanzamenti(
+def _cerca_file_raw(
     client_sharepoint: GraphSharePointClient,
     drive_id: str,
     percorso_cartella: str,
 ) -> list[dict]:
     estensioni_excel = {".xlsx", ".xlsm", ".xls"}
-    file_trovati = [
+    elementi = client_sharepoint.elenca_file_cartella(
+        drive_id,
+        percorso_cartella,
+    )
+    file_avanzamenti = [
         elemento
-        for elemento in client_sharepoint.elenca_file_cartella(
-            drive_id,
-            percorso_cartella,
-        )
+        for elemento in elementi
         if "avanzamenti" in str(elemento.get("name", "")).casefold()
         and Path(str(elemento.get("name", ""))).suffix.casefold()
         in estensioni_excel
         and not str(elemento.get("name", "")).startswith("~$")
     ]
-    return sorted(
-        file_trovati,
+    file_dettaglio = [
+        elemento
+        for elemento in elementi
+        if str(elemento.get("name", "")).casefold()
+        == NOME_FILE_DETTAGLIO_SMARTPHONE.casefold()
+        and not str(elemento.get("name", "")).startswith("~$")
+    ]
+    if len(file_dettaglio) != 1:
+        raise ValueError(
+            f"Atteso un solo {NOME_FILE_DETTAGLIO_SMARTPHONE}, "
+            f"trovati {len(file_dettaglio)}"
+        )
+    file_avanzamenti = sorted(
+        file_avanzamenti,
         key=lambda elemento: str(elemento.get("lastModifiedDateTime", "")),
         reverse=True,
     )
+    return [*file_avanzamenti, file_dettaglio[0]]
 
 
 def _carica_configurazione_negozi() -> tuple[list[str], dict[str, str]]:
@@ -113,6 +130,8 @@ def _estrai_periodo(file_raw: list[dict]) -> tuple[datetime, datetime]:
     pattern = re.compile(r"(\d{2}_\d{2}_\d{4}).*?(\d{2}_\d{2}_\d{4})")
     for file_remoto in file_raw:
         nome_file = str(file_remoto["name"])
+        if nome_file.casefold() == NOME_FILE_DETTAGLIO_SMARTPHONE.casefold():
+            continue
         corrispondenza = pattern.search(Path(nome_file).stem)
         if not corrispondenza:
             raise ValueError(f"Periodo non riconosciuto nel nome: {nome_file}")
@@ -244,7 +263,7 @@ def leggi_totali_report_precedente(
                 pista = str(foglio.cell(riga, 1).value or "").strip().upper()
                 if pista in TIPI_DATO_ATTESI:
                     break
-                if pista not in PISTE_ATTESE:
+                if pista not in PISTE_ATTESE_PER_TIPO[tipo_dato]:
                     continue
                 if pista in totali_piste:
                     raise ValueError(
@@ -255,10 +274,10 @@ def leggi_totali_report_precedente(
                     foglio.cell(riga, colonna_totale).value,
                     riferimento=(
                         f"{nome_file}!"
-                        f"{foglio.cell(riga, colonna_totale).coordinate}"
+                        f"{get_column_letter(colonna_totale)}{riga}"
                     ),
                 )
-            if set(totali_piste) != set(PISTE_ATTESE):
+            if set(totali_piste) != set(PISTE_ATTESE_PER_TIPO[tipo_dato]):
                 raise ValueError(
                     f"Piste non coerenti nella sezione {tipo_dato} di {nome_file}"
                 )
@@ -301,7 +320,7 @@ def _crea_foglio_report(
         name="Calibri", size=12, bold=True, color=bianco
     )
     font_sezione = Font(
-        name="Aptos Narrow",
+        name="Calibri",
         size=14,
         bold=True,
         color=rosso_testo,
@@ -309,7 +328,7 @@ def _crea_foglio_report(
         scheme="minor",
     )
     font_etichette = Font(
-        name="Aptos Narrow",
+        name="Calibri",
         size=11,
         color=Color(theme=1),
         family=2,
@@ -349,7 +368,7 @@ def _crea_foglio_report(
     foglio["A1"].font = Font(name="Calibri", size=12, bold=True, family=2)
     foglio["A1"].alignment = Alignment(horizontal="right")
     foglio["B1"] = datetime.now()
-    foglio["B1"].number_format = "dd/mm/yyyy hh:mm"
+    foglio["B1"].number_format = "m/d/yy h:mm"
     foglio["B1"].font = Font(name="Calibri", size=12, bold=True, family=2)
     foglio["B1"].alignment = Alignment(horizontal="left")
 
@@ -408,9 +427,10 @@ def _crea_foglio_report(
                     bottom=bordo_tratteggiato,
                 )
 
-        for scarto, pista in enumerate(PISTE_ATTESE, start=1):
+        piste_sezione = PISTE_ATTESE_PER_TIPO[tipo_dato]
+        for scarto, pista in enumerate(piste_sezione, start=1):
             riga = riga_titolo + scarto
-            if scarto in (1, len(PISTE_ATTESE)):
+            if scarto in (1, len(piste_sezione)):
                 foglio.row_dimensions[riga].height = 15
             foglio.cell(riga, 1, pista)
             for colonna in range(1, colonna_variazione + 1):
@@ -427,7 +447,7 @@ def _crea_foglio_report(
                     vertical=None if colonna == 1 else "center",
                     indent=1 if colonna == 1 else 0,
                 )
-                ultima_riga = scarto == len(PISTE_ATTESE)
+                ultima_riga = scarto == len(piste_sezione)
                 if colonna == 1:
                     cella.border = Border(
                         left=bordo_spesso,
@@ -460,6 +480,200 @@ def _crea_foglio_report(
     return foglio, colonne, colonna_totale, colonna_variazione
 
 
+def _crea_foglio_dettaglio_smartphone(
+    workbook: Workbook,
+    negozi: list[str],
+    codici_negozi: dict[str, str],
+    righe_dettaglio: list[dict],
+):
+    """Crea il foglio di dettaglio replicando il layout approvato."""
+    foglio = workbook.create_sheet(NOME_FOGLIO_DETTAGLIO_SMARTPHONE)
+    foglio.sheet_view.showGridLines = False
+
+    rosso_sfondo = "FF8B0300"
+    rosso_testo = "FFC00000"
+    rosso_bordo = "FFE05451"
+    grigio_totale = "FF595959"
+    grigio_chiaro = "FFE7E6E6"
+    bianco = "FFFFFFFF"
+    nero = "FF000000"
+    bordo_auto = Color(auto=True)
+    lato_sottile = Side(style="thin", color="FFB7B7B7")
+    lato_spesso = Side(style="thick", color=bordo_auto)
+    lato_medio = Side(style="medium", color=bordo_auto)
+    lato_rosso_medio = Side(style="medium", color=rosso_bordo)
+    lato_rosso_tratteggiato = Side(style="dashed", color=rosso_bordo)
+    nessun_lato = Side()
+
+    codice_per_negozio = {
+        negozio: codice for codice, negozio in codici_negozi.items()
+    }
+    colonne = {negozio: indice + 3 for indice, negozio in enumerate(negozi)}
+    colonna_totale = len(negozi) + 3
+
+    foglio.column_dimensions["A"].width = 6
+    foglio.column_dimensions["B"].width = 39.85546875
+    foglio.column_dimensions["C"].width = 9.140625
+    for riga in range(1, 17):
+        foglio.row_dimensions[riga].height = 15
+    foglio.row_dimensions[1].height = 15.75
+    foglio.row_dimensions[2].height = 15.75
+    foglio.row_dimensions[3].height = 25.5
+    foglio.row_dimensions[4].height = 14.25
+
+    foglio.merge_cells("C1:D1")
+    foglio["B1"] = "Aggiornato il:"
+    foglio["B1"].font = Font(name="Calibri", size=12, bold=True)
+    foglio["B1"].alignment = Alignment(horizontal="right")
+    foglio["C1"] = datetime.now()
+    foglio["C1"].number_format = "m/d/yy h:mm"
+    foglio["C1"].font = Font(name="Calibri", size=12, bold=True)
+    foglio["C1"].alignment = Alignment(horizontal="center")
+
+    foglio["B3"] = "DETTAGLIO TELEFONI"
+    foglio["B3"].font = Font(
+        name="Aharoni", size=14, bold=True, color=Color(theme=0)
+    )
+    foglio["B3"].fill = PatternFill("solid", fgColor=rosso_bordo)
+    foglio["B3"].alignment = Alignment(horizontal="center", vertical="center")
+    foglio["B3"].border = Border(
+        left=lato_spesso,
+        right=lato_spesso,
+        top=lato_spesso,
+        bottom=nessun_lato,
+    )
+    intestazioni = [
+        *(codice_per_negozio[negozio] for negozio in negozi),
+        "TOT.",
+    ]
+    for colonna, intestazione in enumerate(intestazioni, start=3):
+        cella = foglio.cell(3, colonna, intestazione)
+        cella.fill = PatternFill(
+            "solid",
+            fgColor=grigio_totale if colonna == colonna_totale else rosso_sfondo,
+        )
+        cella.font = Font(
+            name="Calibri",
+            size=12 if colonna == colonna_totale else 11,
+            bold=True,
+            color=bianco,
+        )
+        cella.alignment = Alignment(horizontal="center", vertical="center")
+        cella.border = Border(
+            left=lato_spesso if colonna == 3 else (
+                lato_medio if colonna == colonna_totale else lato_rosso_medio
+            ),
+            right=lato_spesso if colonna == colonna_totale else (
+                lato_medio if colonna == colonna_totale - 1 else lato_rosso_medio
+            ),
+            top=lato_spesso,
+            bottom=lato_medio,
+        )
+
+    foglio["B4"] = "TOTALI"
+    foglio["B4"].font = Font(
+        name="Calibri", size=12, bold=True, color=Color(theme=1)
+    )
+    foglio["B4"].alignment = Alignment(horizontal="center", vertical="center")
+    foglio["B4"].border = Border(
+        left=Side(style="thick", color=rosso_bordo),
+        right=lato_spesso,
+        top=Side(style="medium", color=Color(theme=1)),
+        bottom=lato_rosso_medio,
+    )
+    for colonna in range(3, colonna_totale + 1):
+        lettera = get_column_letter(colonna)
+        cella = foglio.cell(4, colonna, f"=+SUM({lettera}5:{lettera}16)")
+        cella.fill = PatternFill(
+            "solid",
+            fgColor="FFFFFF00" if colonna == colonna_totale else grigio_chiaro,
+        )
+        cella.font = Font(
+            name="Calibri",
+            size=12,
+            bold=True,
+            color=Color(theme=1) if colonna == colonna_totale else nero,
+        )
+        cella.alignment = Alignment(horizontal="center", vertical="center")
+        cella.border = Border(
+            left=lato_spesso if colonna == 3 else (
+                lato_medio if colonna == colonna_totale else lato_rosso_tratteggiato
+            ),
+            right=lato_spesso if colonna == colonna_totale else (
+                nessun_lato
+                if colonna == colonna_totale - 1
+                else lato_rosso_tratteggiato
+            ),
+            top=lato_medio if colonna == colonna_totale else nessun_lato,
+            bottom=lato_rosso_medio,
+        )
+
+    if len(righe_dettaglio) != 12:
+        raise ValueError(
+            "Il dettaglio smartphone deve contenere esattamente 12 righe; "
+            f"trovate {len(righe_dettaglio)}"
+        )
+    for indice, dati in enumerate(righe_dettaglio, start=5):
+        prima_riga = indice == 5
+        ultima_riga = indice == 16
+        sopra = nessun_lato if prima_riga else lato_rosso_tratteggiato
+        sotto = lato_spesso if ultima_riga else lato_rosso_tratteggiato
+        descrizione = foglio.cell(indice, 2, dati["descrizione"])
+        descrizione.font = Font(
+            name="Calibri", size=11, bold=True, color=Color(theme=1)
+        )
+        descrizione.alignment = Alignment(
+            horizontal="left", vertical="center", wrap_text=True
+        )
+        descrizione.border = Border(
+            left=lato_spesso,
+            right=lato_spesso,
+            top=nessun_lato if prima_riga else Side(style="dashed", color=bordo_auto),
+            bottom=lato_spesso if ultima_riga else Side(
+                style="dashed", color=bordo_auto
+            ),
+        )
+        for negozio, colonna in colonne.items():
+            cella = foglio.cell(indice, colonna, dati["valori"][negozio])
+            valore = dati["valori"][negozio]
+            cella.font = Font(
+                name="Calibri",
+                size=12,
+                bold=True,
+                color=Color(theme=1) if valore is not None else None,
+            )
+            cella.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+                wrap_text=True if valore is None else None,
+            )
+            cella.border = Border(
+                left=lato_spesso if colonna == 3 else lato_sottile,
+                right=lato_medio if colonna == colonna_totale - 1 else lato_sottile,
+                top=lato_rosso_medio if prima_riga else lato_rosso_tratteggiato,
+                bottom=sotto,
+            )
+        totale = foglio.cell(indice, colonna_totale, dati["totale"])
+        totale.fill = PatternFill("solid", fgColor=grigio_chiaro)
+        totale.font = Font(name="Calibri", size=12, bold=True, color=nero)
+        totale.alignment = Alignment(horizontal="center", vertical="center")
+        totale.border = Border(
+            left=lato_medio,
+            right=lato_spesso,
+            top=sopra,
+            bottom=sotto,
+        )
+        if indice < 16:
+            margine_destro = foglio.cell(indice, colonna_totale + 1)
+            margine_destro.font = Font(
+                name="Calibri", size=11, color=Color(theme=1)
+            )
+            margine_destro.alignment = Alignment(
+                vertical="center", wrap_text=True
+            )
+    return foglio
+
+
 def _formatta_variazione(valore: int | float | None) -> str | None:
     if valore is None:
         return None
@@ -479,6 +693,7 @@ def genera_report(
     periodo: tuple[datetime, datetime],
     cartella_output: Path,
     totali_precedenti: dict[str, dict[str, int | float]] | None = None,
+    dettaglio_smartphone: list[dict] | None = None,
 ) -> Path:
     inizio, fine = periodo
     cartella_output = Path(cartella_output)
@@ -496,11 +711,12 @@ def genera_report(
         righe_iniziali = {"PEZZI": 4, "PUNTI": 12}
         for tipo_dato, dati_piste in dati_gruppi.items():
             riga_iniziale = righe_iniziali[tipo_dato]
+            numero_piste = len(PISTE_ATTESE_PER_TIPO[tipo_dato])
             righe_piste = {
                 str(foglio.cell(riga, 1).value).strip().upper(): riga
-                for riga in range(riga_iniziale, riga_iniziale + 5)
+                for riga in range(riga_iniziale, riga_iniziale + numero_piste)
             }
-            if set(righe_piste) != set(PISTE_ATTESE):
+            if set(righe_piste) != set(PISTE_ATTESE_PER_TIPO[tipo_dato]):
                 raise ValueError(
                     f"Piste del blocco {tipo_dato} non coerenti: "
                     f"{sorted(righe_piste)}"
@@ -544,6 +760,13 @@ def genera_report(
                     )
                 if tipo_dato == "PUNTI":
                     cella_totale.number_format = "General"
+        if dettaglio_smartphone is not None:
+            _crea_foglio_dettaglio_smartphone(
+                workbook,
+                negozi,
+                codici_negozi,
+                dettaglio_smartphone,
+            )
         workbook.save(percorso_output)
     except Exception:
         workbook.close()
@@ -613,7 +836,7 @@ def main() -> None:
             SHAREPOINT_RAW_LIBRARY_NAME,
         )
         drive_id_raw = raccolta_raw["id"]
-        file_raw = _cerca_file_avanzamenti(
+        file_raw = _cerca_file_raw(
             client_sharepoint,
             drive_id_raw,
             SHAREPOINT_RAW_FOLDER,
@@ -641,18 +864,40 @@ def main() -> None:
 
         fase = "lettura e validazione file RAW"
         print(f"\n→ {fase.capitalize()}...")
+        file_avanzamenti = [
+            file_remoto
+            for file_remoto in file_raw
+            if str(file_remoto["name"]).casefold()
+            != NOME_FILE_DETTAGLIO_SMARTPHONE.casefold()
+        ]
+        file_dettaglio = next(
+            file_remoto
+            for file_remoto in file_raw
+            if str(file_remoto["name"]).casefold()
+            == NOME_FILE_DETTAGLIO_SMARTPHONE.casefold()
+        )
         dati_piste = leggi_tutti_file_raw(
-            file_raw,
+            file_avanzamenti,
             codici_negozi,
             set(negozi),
             PAROLE_CHIAVE_PISTE,
-            set(PISTE_ATTESE),
+            {
+                tipo: set(piste)
+                for tipo, piste in PISTE_ATTESE_PER_TIPO.items()
+            },
             set(TIPI_DATO_ATTESI),
+        )
+        dettaglio_smartphone = leggi_dettaglio_smartphone(
+            str(file_dettaglio["name"]),
+            file_dettaglio["content"],
+            codici_negozi,
+            set(negozi),
         )
         print(
             f"✓ File RAW validati: {len(file_raw)} file, "
             f"{len(dati_piste['PEZZI'])} piste PEZZI e "
-            f"{len(dati_piste['PUNTI'])} piste PUNTI"
+            f"{len(dati_piste['PUNTI'])} piste PUNTI; "
+            f"{len(dettaglio_smartphone)} righe dettaglio smartphone"
         )
 
         fase = "controllo periodo"
@@ -699,6 +944,7 @@ def main() -> None:
                 periodo,
                 Path(cartella_temporanea),
                 totali_precedenti,
+                dettaglio_smartphone,
             )
             print(f"✓ Report temporaneo creato: {output.name}")
 

@@ -2,6 +2,7 @@ from datetime import datetime
 from io import BytesIO
 
 import pandas as pd
+import config as configurazione_fcst
 from colorama import Fore, init
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -15,6 +16,7 @@ from config import (
     trova_periodo_gara,
 )
 from elabora_fcst import main as elabora_fcst_main
+from invia_email import invia_avanzamento_gara
 from crea_report import (
     conta_per_mese,
     crea_fogli_report,
@@ -441,7 +443,13 @@ def formatta_fcst(path_file) -> None:
     ws.column_dimensions["M"].width = 12.43
     ws.column_dimensions["N"].width = 18
 
-    wb.save(path_file)
+    if hasattr(path_file, "seek") and hasattr(path_file, "truncate"):
+        path_file.seek(0)
+        path_file.truncate(0)
+        wb.save(path_file)
+        path_file.seek(0)
+    else:
+        wb.save(path_file)
 
 
 def formatta_foglio_fcst(path_file) -> None:
@@ -463,8 +471,14 @@ def main(df_gara: pd.DataFrame, df_oppo: pd.DataFrame, df_appu: pd.DataFrame) ->
         )
     )
 
+    # Il report aggregato e l'email devono essere prodotti a ogni esecuzione,
+    # anche nell'eventualita' che Mandelli non abbia righe proprie nei sorgenti.
+    if "G.MANDELLI" not in {venditore.strip().upper() for venditore in venditori}:
+        venditori.append("G.MANDELLI")
+
     venditori_con_path = ordina_venditori_crm_ultimo(venditori)
     file_creati = []
+    email_report = None
 
     for venditore in venditori_con_path:
         # CRM contribuisce al totale di Mandelli ma non ha un report personale.
@@ -490,11 +504,28 @@ def main(df_gara: pd.DataFrame, df_oppo: pd.DataFrame, df_appu: pd.DataFrame) ->
             includi_totale=includi_totale,
         )
 
+        if venditore.strip().upper() == "G.MANDELLI":
+            totale = fogli["FCST"].iloc[0]
+
         nome_file = f"FCST_{pulisci_nome_file(venditore)}.xlsx"
         buffer = BytesIO()
         scrivi_report_excel(buffer, fogli)
         formatta_foglio_fcst(buffer)
         contenuto = buffer.getvalue()
+        if venditore.strip().upper() == "G.MANDELLI":
+            mesi_correnti = trova_periodo_gara()[1]
+            email_report = {
+                "contenuto": contenuto,
+                "periodo": str(totale["Periodo"]),
+                "actual_mesi": {
+                    MESI_IT[mese]: float(totale[f"{abbrevia_mese(mese)} Attivo"])
+                    for mese in mesi_correnti
+                },
+                "da_inserire": float(totale["o/w da inserire"]),
+                "in_attivazione": float(totale["o/w in attivazione"]),
+                "totale_opportunita": float(totale["TOT OPPS CRM"]),
+                "nome_file": nome_file,
+            }
         try:
             caricato = carica_report_venditore(venditore, nome_file, contenuto)
         except (KeyError, ValueError) as errore:
@@ -503,6 +534,24 @@ def main(df_gara: pd.DataFrame, df_oppo: pd.DataFrame, df_appu: pd.DataFrame) ->
 
         file_creati.append(caricato)
         print(Fore.GREEN + "OK " + Fore.RESET + nome_file)
+
+    if email_report is None:
+        raise RuntimeError("Report aggregato G.MANDELLI non creato: email FCST non inviata")
+
+    target_gara = getattr(configurazione_fcst, "TARGET_GARA", None)
+    if target_gara is None:
+        raise RuntimeError("TARGET_GARA non configurato in config.py")
+
+    invia_avanzamento_gara(
+        email_report["contenuto"],
+        periodo=email_report["periodo"],
+        actual_mesi=email_report["actual_mesi"],
+        da_inserire=email_report["da_inserire"],
+        in_attivazione=email_report["in_attivazione"],
+        target=float(target_gara),
+        totale_opportunita=email_report["totale_opportunita"],
+        nome_file=email_report["nome_file"],
+    )
 
     print(f"\nFile creati: {len(file_creati)}")
     print(f"Destinazione: {PATH_OUTPUT_FCST}")

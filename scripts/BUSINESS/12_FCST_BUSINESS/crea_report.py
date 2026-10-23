@@ -6,7 +6,8 @@ from config import(
     PATH_INPUT_PARQUET,
     PATH_OUTPUT_FCST,
     MESI_IT,
-    trova_periodo_gara
+    trova_periodo_gara,
+    carica_nomi_venditori,
 
 )
 import pandas as pd
@@ -213,7 +214,13 @@ def formatta_excel(path_file) -> None:
             max_len = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col_cells)
             ws.column_dimensions[col_cells[0].column_letter].width = min(max(max_len + 2, 12), 45)
 
-    wb.save(path_file)
+    if hasattr(path_file, "seek") and hasattr(path_file, "truncate"):
+        path_file.seek(0)
+        path_file.truncate(0)
+        wb.save(path_file)
+        path_file.seek(0)
+    else:
+        wb.save(path_file)
 
 def scrivi_report_excel(path_file, fogli: dict) -> None:
     with pd.ExcelWriter(path_file, engine="openpyxl") as writer:
@@ -229,7 +236,7 @@ def crea_report_bytes(fogli: dict) -> bytes:
     return buffer.getvalue()
 
 def venditori_presenti(*dataframes: tuple[pd.DataFrame, str]) -> list[str]:
-    venditori = set()
+    venditori_nei_dati = set()
 
     for df, colonna in dataframes:
         if colonna not in df.columns:
@@ -241,9 +248,23 @@ def venditori_presenti(*dataframes: tuple[pd.DataFrame, str]) -> list[str]:
             .astype(str)
             .str.strip()
         )
-        venditori.update(valore for valore in valori if valore and valore.lower() != "nan")
+        venditori_nei_dati.update(
+            valore.upper()
+            for valore in valori
+            if valore and valore.lower() != "nan"
+        )
 
-    return sorted(venditori, key=str.upper)
+    # Il catalogo JSON e' la fonte autorevole: valori presenti nei dati ma non
+    # configurati come nome_crm non devono comparire nel cruscotto.
+    venditori_catalogo = carica_nomi_venditori()
+    return sorted(
+        (
+            venditore
+            for venditore in venditori_catalogo
+            if venditore.upper() in venditori_nei_dati
+        ),
+        key=str.upper,
+    )
 
 def main(df_gara, df_oppo, df_appu):
     print("\n === Creazione file FCST ===")

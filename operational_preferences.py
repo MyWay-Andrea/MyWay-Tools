@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Signal
 
 DEFAULT_FAVORITES = [
     "estrai_file_gara", "forecast_business", "formatta_pedonalita",
-    "cruscotto_tracciamento", "cruscotto_giornaliero",
+    "cruscotto_tracciamento", "cruscotto_giornaliero", "performance_management_crm",
 ]
 
 

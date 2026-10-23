@@ -113,6 +113,9 @@ class ExecutionService(QObject):
                 raise FileNotFoundError("Script non disponibile")
             env = os.environ.copy()
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+            bundled_node = script.parent / "node.exe"
+            if bundled_node.is_file():
+                env["PATH"] = str(script.parent) + os.pathsep + env.get("PATH", "")
             bootstrap = (
                 "import runpy, sys; from pathlib import Path; script = sys.argv[1]; "
                 "sys.argv = sys.argv[1:]; sys.path.insert(0, str(Path(script).resolve().parent)); "
@@ -170,6 +173,7 @@ class ExecutionService(QObject):
                 outcome = "errore"
                 self.terminal.write_safe("Errore di salvataggio dello storico: controllare spazio e permessi del profilo.\n", "#EE8D8D")
             self._done.emit({"id": run_id, "activity_id": activity.activity_id,
+                             "workflow_run_id": workflow_run_id, "step_index": step_index,
                              "outcome": outcome, "exit_code": code})
 
     @Slot(object)

@@ -4,6 +4,7 @@ Business scripts and live SharePoint are never executed. Optional screenshots:
 set MYWAY_UI_SCREENSHOTS to a temporary output directory.
 """
 import json
+from dataclasses import replace
 import os
 from pathlib import Path
 import subprocess
@@ -50,6 +51,10 @@ class WorkspaceTests(unittest.TestCase):
         self.wait_until(lambda: not self.window.status_service.scanning)
 
     def tearDown(self):
+        from operations_views import AsyncQuery
+        # Release SQLite readers before deleting the temporary profile on Windows.
+        self.wait_until(lambda: all(not query.running and query.pending is None
+                                   for query in self.window.findChildren(AsyncQuery)))
         self.window.close()
         self.window.deleteLater()
         self.app.sendPostedEvents(None, QEvent.DeferredDelete)
@@ -64,7 +69,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertTrue(predicate(), "Timed out waiting for a GUI/worker signal")
 
     def test_sections_search_selection_and_empty_state(self):
-        for section, count in {"today": 5, "all": 18, "business": 8, "consumer": 6, "campaigns": 4}.items():
+        for section, count in {"today": 6, "all": 19, "business": 9, "consumer": 6, "campaigns": 4}.items():
             self.window.sidebar.buttons[section].click()
             self.assertEqual(len(self.window.hub.buttons), count)
             self.assertTrue(self.window.sidebar.buttons[section].isChecked())
@@ -97,9 +102,9 @@ class WorkspaceTests(unittest.TestCase):
             self.assertIs(hub.detail.activity, selected)
             launch.assert_not_called()
         self.window.show_page("today")
-        self.assertEqual(len(hub.buttons), 6)
+        self.assertEqual(len(hub.buttons), 7)
         hub.buttons[-1].star.click()
-        self.assertEqual(len(hub.buttons), 5)
+        self.assertEqual(len(hub.buttons), 6)
         loaded = Favorites([a.activity_id for a in self.window.activities], self.window.favorites.path)
         self.assertEqual(loaded.ids, DEFAULT_FAVORITES)
 
@@ -122,6 +127,125 @@ class WorkspaceTests(unittest.TestCase):
         self.wait_until(lambda: self.window.workflow_page.query.version > 0)
         QTest.qWait(50)
         editor.deleteLater()
+
+    def prepare_safe_workflow(self, contents, repeat=False):
+        manager = self.window.workflow_manager
+        keys = []
+        for index, content in enumerate(contents):
+            original = self.window.activities[index]
+            script = self.root / f"safe_workflow_{index}.py"
+            script.write_text(content, encoding="utf-8")
+            manager.activities[original.activity_id] = replace(
+                original, title=f"Script innocuo {index + 1}", script=script,
+                folder=None, filename=None, remote_check=None, output_validator=None)
+            keys.append(original.activity_id)
+        self.window.execution.status_service = None
+        definition = {"id": "safe-monitor", "name": "Monitor innocuo", "steps": keys * (2 if repeat else 1)}
+        self.window.workflow_store.save(definition)
+        self.window.workflow_page.reload()
+        self.window.show_page("workflows")
+        self.assertFalse(self.window.workflow_page.monitor.isVisible())
+        return manager, self.window.workflow_page.monitor
+
+    def finish_safe_workflow(self):
+        if self.window.workflow_manager.active:
+            self.window.workflow_manager.cancel()
+        self.wait_until(lambda: not self.window.workflow_manager.active, timeout=12000)
+
+    def test_workflow_monitor_success_repeated_steps_and_logs(self):
+        manager, monitor = self.prepare_safe_workflow(
+            ["import time\nprint('SAFE_LOG', time.monotonic(), flush=True)"], repeat=True)
+        self.window.execution.history.settings["log_mode"] = "redacted"
+        try:
+            with patch.object(menu, "_trova_python", return_value=sys.executable):
+                self.window.workflow_page.start_button.click()
+                self.assertTrue(monitor.isVisible())
+                self.assertFalse(self.window.workflow_page.progress.isVisible())
+                self.wait_until(lambda: not manager.active, timeout=12000)
+            self.assertEqual(manager.outcome, "completato")
+            self.assertEqual(monitor.bar.value(), 2)
+            self.assertEqual(monitor.counter.text(), "2 / 2 script completati")
+            self.assertEqual(manager.step_states, ["Completato", "Completato"])
+            self.assertEqual(len(set(manager.step_run_ids)), 2)
+            self.assertTrue(self.window.terminal._collapsed)
+            self.assertEqual(self.window.terminal.state.text(), "Pronto")
+            self.assertFalse(monitor.stop_button.isEnabled())
+            duration = monitor.duration.text()
+            QTest.qWait(220)
+            self.assertEqual(monitor.duration.text(), duration)
+            monitor.logs_button.click()
+            self.assertTrue(self.window.terminal.log.isVisible())
+            self.assertEqual(monitor.logs_button.text(), "Nascondi log")
+            self.assertIn("SAFE_LOG", self.window.terminal.log.toPlainText())
+            monitor.logs_button.click()
+            self.assertTrue(self.window.terminal._collapsed)
+            logs = []
+            for index in range(2):
+                item = monitor.steps.item(index)
+                QTest.mouseClick(monitor.steps.viewport(), Qt.LeftButton,
+                                 pos=monitor.steps.visualItemRect(item).center())
+                self.wait_until(lambda: "SAFE_LOG" in monitor.step_log.toPlainText())
+                self.assertEqual(monitor.log_key[2], manager.step_run_ids[index])
+                logs.append(monitor.step_log.toPlainText())
+            self.assertNotEqual(logs[0], logs[1])
+            self.window.show_page("all")
+            self.assertFalse(monitor.isVisible())
+            self.window.show_page("workflows")
+            self.assertTrue(monitor.isVisible())
+            self.assertEqual(monitor.bar.value(), 2)
+            output = os.environ.get("MYWAY_UI_SCREENSHOTS")
+            if output:
+                self.window.grab().save(str(Path(output) / "workflow-completed.png"))
+        finally:
+            self.finish_safe_workflow()
+
+    def test_workflow_monitor_error_and_repeat_execution(self):
+        manager, monitor = self.prepare_safe_workflow([
+            "print('SAFE_FIRST', flush=True)", "raise SystemExit(7)", "print('NEVER_RUN')"])
+        try:
+            with patch.object(menu, "_trova_python", return_value=sys.executable):
+                for _ in range(2):
+                    old_run = manager.run_id
+                    self.window.workflow_page.start_button.click()
+                    self.assertNotEqual(manager.run_id, old_run)
+                    self.assertEqual(monitor.bar.value(), 0)
+                    self.wait_until(lambda: not manager.active, timeout=12000)
+                    self.assertEqual(manager.step_states, ["Completato", "Errore", "Saltato"])
+                    self.assertEqual(monitor.bar.value(), 1)
+                    self.assertIn("7", monitor.state.text())
+                    monitor.show_step_log(monitor.steps.item(1))
+                    self.wait_until(lambda: "exit 7" in monitor.step_log.toPlainText())
+            self.assertNotIn("NEVER_RUN", self.window.terminal.log.toPlainText())
+        finally:
+            self.finish_safe_workflow()
+
+    def test_workflow_monitor_navigation_and_manual_stop(self):
+        manager, monitor = self.prepare_safe_workflow([
+            "import time\nprint('SAFE_RUNNING', flush=True)\ntime.sleep(60)", "print('NEVER_RUN')"])
+        try:
+            with patch.object(menu, "_trova_python", return_value=sys.executable):
+                self.window.workflow_page.start_button.click()
+                self.wait_until(lambda: "SAFE_RUNNING" in self.window.terminal.log.toPlainText())
+                self.assertEqual(monitor.steps.item(0).data(Qt.UserRole), "In esecuzione")
+                self.assertEqual(monitor.bar.value(), 0)
+                self.window.show_page("all")
+                self.assertTrue(manager.active)
+                self.assertFalse(monitor.isVisible())
+                self.assertFalse(monitor.timer.isActive())
+                self.window.show_page("workflows")
+                self.assertTrue(monitor.isVisible())
+                self.assertTrue(monitor.timer.isActive())
+                output = os.environ.get("MYWAY_UI_SCREENSHOTS")
+                if output:
+                    self.window.grab().save(str(Path(output) / "workflow-running.png"))
+                monitor.stop_button.click()
+                self.wait_until(lambda: not manager.active, timeout=12000)
+            self.assertEqual(manager.step_states, ["Interrotto", "Saltato"])
+            self.assertEqual(monitor.bar.value(), 0)
+            self.assertIn("interrotto", monitor.state.text())
+            self.assertNotIn("NEVER_RUN", self.window.terminal.log.toPlainText())
+        finally:
+            self.finish_safe_workflow()
 
     def test_summary_history_real_data_and_filters(self):
         self.window.show_page("summary")

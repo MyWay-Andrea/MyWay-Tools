@@ -5,6 +5,7 @@
             "sharepoint_site_path": "/sites/AlbertoMilani",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Alberto Milani/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Alberto Milani/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "alberto, milani",
                 "alberto,milani",
@@ -22,6 +23,7 @@
             "sharepoint_site_path": "/sites/DaniloCarugo",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Danilo Carugo/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Danilo Carugo/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "danilo, carugo",
                 "danilo,carugo",
@@ -40,6 +42,7 @@
             "sharepoint_site_path": "/sites/DorianoGnani",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Doriano Gnani/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Doriano Gnani/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "doriano, gnani",
                 "doriano,gnani",
@@ -57,6 +60,7 @@
             "sharepoint_site_path": "/sites/EduartAgalliu",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Eduart Agalliu/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Eduart Agalliu/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "eduart, agalliu",
                 "eduart,agalliu",
@@ -74,6 +78,7 @@
             "sharepoint_site_path": "/sites/EnricoPignatta",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Enrico Pignatta/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Enrico Pignatta/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "enrico, pignatta",
                 "enrico,pignatta",
@@ -91,6 +96,7 @@
             "sharepoint_site_path": "/sites/BUSINESS-ARLOTTA",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Fabio Arlotta/AGENDA -PERFORMANCE",
+            "sharepoint_campagne_folder": "Fabio Arlotta/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "fabio, arlotta",
                 "fabio,arlotta",
@@ -108,6 +114,7 @@
             "sharepoint_site_path": "/sites/GiorgioMandelli",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Giorgio Mandelli/BUSINESS/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Giorgio Mandelli/BUSINESS/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "giorgio, mandelli",
                 "giorgio,mandelli",
@@ -125,6 +132,7 @@
             "sharepoint_site_path": "/sites/GiovanniMarra",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Giovanni Marra/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Giovanni Marra/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "giovanni, marra",
                 "giovanni,marra",
@@ -142,6 +150,7 @@
             "sharepoint_site_path": "/sites/MauroSala",
             "sharepoint_library": "Documents",
             "sharepoint_fcst_folder": "Mauro Sala/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Mauro Sala/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
                 "mauro, sala",
                 "mauro,sala",
@@ -155,8 +164,39 @@
             ]
         },
         {
-            "nome_crm": "CRM MWR",
+            "nome_crm": "M.DEMELAS",
+            "sharepoint_site_path": "/sites/MarioDemelas",
+            "sharepoint_library": "Documents",
+            "sharepoint_fcst_folder": "Mario Demelas/AGENDA - PERFORMANCE",
+            "sharepoint_campagne_folder": "Mario Demelas/CAMPAGNE - DOCUMENTI",
             "alias_cb": [
+                "mario, demelas",
+                "mario,demelas",
+                "demelas, mario",
+                "demelas, mario - extra",
+                "demelas,mario",
+                "m.demelas",
+                "d.mario",
+                "demelas",
+                "mario"
+            ]
+        },
+        {
+            "nome_crm": "CRM MWR",
+            "sharepoint_campagne_destinations": [
+                {
+                    "sharepoint_site_path": "/sites/LucaMattaini",
+                    "sharepoint_library": "Documents",
+                    "sharepoint_campagne_folder": "Luca Mattaini/CAMPAGNE - DOCUMENTI"
+                },
+                {
+                    "sharepoint_site_path": "/sites/CinziaFebbo",
+                    "sharepoint_library": "Documents",
+                    "sharepoint_campagne_folder": "Cinzia Febbo/CAMPAGNE - DOCUMENTI"
+                }
+            ],
+            "alias_cb": [
+                "bo",
                 "crm my way",
                 "crm, my way",
                 "crm mwr",

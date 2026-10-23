@@ -11,9 +11,10 @@ class PackagingTests(unittest.TestCase):
     def test_sensitive_output_and_cache_are_excluded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ("scripts/project/main.py", "scripts/project/.env", "scripts/project/data.csv",
+            for name in ("scripts/project/main.py", "scripts/project/test_main.py", "scripts/project/.env", "scripts/project/data.csv",
                          "scripts/project/data.json", "scripts/project/private.xlsx",
-                         "scripts/project/__pycache__/cache.pyc", "scripts/project/output/report.xlsx"):
+                         "scripts/project/__pycache__/cache.pyc", "scripts/project/output/report.xlsx",
+                         "scripts/project/tests/helper.py", "scripts/project/prove/check.py"):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("test fixture")

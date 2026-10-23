@@ -1,26 +1,14 @@
 {
     "negozi": [
-        "FIDENZA",
-        "GALASSIA",
-        "TORRI",
-        "EUROSIA",
-        "SASSUOLO_M.POLO",
-        "CARPI",
-        "BONIFACIO",
-        "MARANELLO",
-        "CORSO_VEM",
-        "SASSUOLO_CENTRO"
-    ],
-    "codici_negozi": {
-        "FID": "FIDENZA",
-        "PC2": "GALASSIA",
-        "TOR": "TORRI",
-        "EUR": "EUROSIA",
-        "SAS": "SASSUOLO_M.POLO",
-        "CAR": "CARPI",
-        "SBF": "BONIFACIO",
-        "MAR": "MARANELLO",
-        "PCC": "CORSO_VEM",
-        "SAC": "SASSUOLO_CENTRO"
-    }
+        {"nome": "FIDENZA", "alias": "FID", "codice_dealer": "28657.0W021", "nomi_storici": ["Fidenza"]},
+        {"nome": "GALASSIA", "alias": "PC2", "codice_dealer": "28657.0W022", "nomi_storici": ["Piacenza Galassia"]},
+        {"nome": "TORRI", "alias": "TOR", "codice_dealer": "28657.0W100", "nomi_storici": ["Parma Torri"]},
+        {"nome": "EUROSIA", "alias": "EUR", "codice_dealer": "28657.0W101", "nomi_storici": ["Parma Eurosia"]},
+        {"nome": "SASSUOLO_M.POLO", "alias": "SAS", "codice_dealer": "28657.0W728", "nomi_storici": ["Sassuolo"]},
+        {"nome": "CARPI", "alias": "CAR", "codice_dealer": "28657.0X132", "nomi_storici": ["Carpi"]},
+        {"nome": "BONIFACIO", "alias": "SBF", "codice_dealer": "28657.0X482", "nomi_storici": ["San Bonifacio"]},
+        {"nome": "MARANELLO", "alias": "MAR", "codice_dealer": "28657.0X481", "nomi_storici": ["Maranello"]},
+        {"nome": "CORSO_VEM", "alias": "PCC"},
+        {"nome": "SASSUOLO_CENTRO", "alias": "SAC"}
+    ]
 }

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 
 def identifica_tipo_dato(nome: str | Path) -> str:
@@ -133,13 +134,13 @@ def leggi_file_raw(
             if codice not in codici_negozi:
                 raise ValueError(
                     f"Codice negozio sconosciuto in {nome_file}, "
-                    f"cella {foglio.cell(1, colonna).coordinate}: {codice_raw!r}"
+                    f"cella {get_column_letter(colonna)}1: {codice_raw!r}"
                 )
             negozio = codici_negozi[codice]
             negozi_trovati.append(negozio)
             valori[negozio] = _numero_o_vuoto(
                 foglio.cell(2, colonna).value,
-                riferimento=f"{nome_file}!{foglio.cell(2, colonna).coordinate}",
+                riferimento=f"{nome_file}!{get_column_letter(colonna)}2",
             )
 
         _verifica_insieme_negozi(
@@ -151,7 +152,7 @@ def leggi_file_raw(
         )
         totale_file = _numero_o_zero(
             foglio.cell(2, foglio.max_column).value,
-            riferimento=f"{nome_file}!{foglio.cell(2, foglio.max_column).coordinate}",
+            riferimento=f"{nome_file}!{get_column_letter(foglio.max_column)}2",
         )
         if totale_calcolato != round(totale_file, 2):
             raise ValueError(
@@ -173,7 +174,7 @@ def leggi_tutti_file_raw(
     codici_negozi: dict[str, str],
     negozi_attesi: set[str],
     parole_chiave: dict[str, tuple[str, ...]],
-    piste_attese: set[str],
+    piste_attese_per_tipo: dict[str, set[str]],
     tipi_dato_attesi: set[str],
 ) -> dict[str, dict[str, dict[str, Any]]]:
     dati_gruppi: dict[str, dict[str, dict[str, Any]]] = {
@@ -203,6 +204,7 @@ def leggi_tutti_file_raw(
         print(f"     ✓ {tipo_dato} - {pista}: totale {dati['totale']}")
 
     for tipo_dato, dati_piste in dati_gruppi.items():
+        piste_attese = piste_attese_per_tipo[tipo_dato]
         trovate = set(dati_piste)
         mancanti = sorted(piste_attese - trovate)
         extra = sorted(trovate - piste_attese)
@@ -213,3 +215,83 @@ def leggi_tutti_file_raw(
                 f"non previste: {extra or 'nessuna'}"
             )
     return dati_gruppi
+
+
+def leggi_dettaglio_smartphone(
+    nome_file: str,
+    contenuto: bytes,
+    codici_negozi: dict[str, str],
+    negozi_attesi: set[str],
+) -> list[dict[str, Any]]:
+    """Legge le righe del dettaglio smartphone e ne verifica i totali."""
+    workbook = load_workbook(BytesIO(contenuto), read_only=True, data_only=True)
+    try:
+        foglio = workbook.active
+        negozi_per_colonna: dict[int, str] = {}
+        negozi_trovati: list[str] = []
+        for colonna in range(2, 12):
+            codice_raw = foglio.cell(1, colonna).value
+            codice = str(codice_raw or "").strip().upper()
+            if codice not in codici_negozi:
+                raise ValueError(
+                    f"Codice negozio sconosciuto in {nome_file}, "
+                    f"cella {get_column_letter(colonna)}1: {codice_raw!r}"
+                )
+            negozio = codici_negozi[codice]
+            negozi_per_colonna[colonna] = negozio
+            negozi_trovati.append(negozio)
+        _verifica_insieme_negozi(
+            negozi_trovati, negozi_attesi, contesto=nome_file
+        )
+
+        righe: list[dict[str, Any]] = []
+        descrizioni: set[str] = set()
+        for riga in range(2, foglio.max_row + 1):
+            descrizione_raw = foglio.cell(riga, 1).value
+            descrizione = str(descrizione_raw or "").strip()
+            if not descrizione:
+                raise ValueError(
+                    f"Descrizione mancante in {nome_file}!A{riga}"
+                )
+            descrizione_normalizzata = normalizza_testo(descrizione)
+            if descrizione_normalizzata in descrizioni:
+                raise ValueError(
+                    f"Descrizione duplicata in {nome_file}: {descrizione!r}"
+                )
+            descrizioni.add(descrizione_normalizzata)
+            etichetta = descrizione.split(" - ", 1)[-1].strip()
+            if etichetta.casefold().startswith("device - "):
+                etichetta = etichetta[len("device - "):].strip()
+            valori = {
+                negozi_per_colonna[colonna]: _numero_o_vuoto(
+                    foglio.cell(riga, colonna).value,
+                    riferimento=(
+                        f"{nome_file}!{get_column_letter(colonna)}{riga}"
+                    ),
+                )
+                for colonna in negozi_per_colonna
+            }
+            totale_calcolato = round(
+                sum(valore or 0 for valore in valori.values()), 2
+            )
+            totale_file = _numero_o_zero(
+                foglio.cell(riga, 12).value,
+                riferimento=f"{nome_file}!L{riga}",
+            )
+            if totale_calcolato != round(totale_file, 2):
+                raise ValueError(
+                    f"Totale non coerente in {nome_file}, riga {riga}: "
+                    f"calcolato {totale_calcolato}, presente {totale_file}"
+                )
+            righe.append(
+                {
+                    "descrizione": etichetta,
+                    "valori": valori,
+                    "totale": totale_calcolato,
+                }
+            )
+        if not righe:
+            raise ValueError(f"Nessuna riga di dettaglio in {nome_file}")
+        return righe
+    finally:
+        workbook.close()

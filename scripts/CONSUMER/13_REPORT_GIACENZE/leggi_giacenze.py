@@ -9,22 +9,27 @@ import pandas as pd
 
 
 def carica_codici_negozi(file_negozi: Path) -> dict[str, str]:
-    """Legge e valida la mappatura codice-negozio mantenendo l'ordine del JSON."""
+    """Legge la mappatura alias-negozio mantenendo l'ordine del JSON."""
 
     file_negozi = Path(file_negozi)
     with file_negozi.open("r", encoding="utf-8") as file:
         configurazione = json.load(file)
 
-    codici_negozi = configurazione.get("codici_negozi")
-    if not isinstance(codici_negozi, dict):
+    negozi = configurazione.get("negozi")
+    if not isinstance(negozi, list):
         raise ValueError(
-            f"La chiave 'codici_negozi' in {file_negozi} deve essere un dizionario"
+            f"La chiave 'negozi' in {file_negozi} deve essere una lista"
         )
 
     risultato: dict[str, str] = {}
-    for codice, negozio in codici_negozi.items():
+    for record in negozi:
+        if not isinstance(record, dict):
+            raise ValueError(f"Negozio non valido in {file_negozi}: {record!r}")
+
+        codice = record.get("alias")
+        negozio = record.get("nome")
         if not isinstance(codice, str) or not codice.strip():
-            raise ValueError(f"Codice negozio non valido in {file_negozi}: {codice!r}")
+            raise ValueError(f"Alias negozio non valido in {file_negozi}: {codice!r}")
         if not isinstance(negozio, str) or not negozio.strip():
             raise ValueError(
                 f"Nome negozio non valido per il codice {codice!r} in {file_negozi}"

@@ -39,6 +39,15 @@ PAROLE_CHIAVE_PISTE = {
 
 PISTE_ATTESE = tuple(PAROLE_CHIAVE_PISTE)
 TIPI_DATO_ATTESI = ("PEZZI", "PUNTI")
+PISTE_ATTESE_PER_TIPO = {
+    "PEZZI": PISTE_ATTESE,
+    "PUNTI": tuple(
+        pista for pista in PISTE_ATTESE if pista != "COMMISSIONALI"
+    ),
+}
+
+NOME_FILE_DETTAGLIO_SMARTPHONE = "commissionali.xlsx"
+NOME_FOGLIO_DETTAGLIO_SMARTPHONE = "DETTAGLIO SMARTPHONE"
 
 # Microsoft Graph. Le credenziali devono essere impostate come variabili d'ambiente.
 GRAPH_CLIENT_ID = os.getenv("GRAPH_CLIENT_ID", "").strip()

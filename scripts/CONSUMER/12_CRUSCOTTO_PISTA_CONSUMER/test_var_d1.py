@@ -24,10 +24,21 @@ def _dati(totale_base: int) -> dict:
                 "totale": totale_base + indice,
                 "file_origine": "test.xlsx",
             }
-            for indice, pista in enumerate(main.PISTE_ATTESE)
+            for indice, pista in enumerate(main.PISTE_ATTESE_PER_TIPO[tipo])
         }
         for tipo in main.TIPI_DATO_ATTESI
     }
+
+
+def _dettaglio_smartphone() -> list[dict]:
+    return [
+        {
+            "descrizione": f"Voce {indice}",
+            "valori": {"NEGOZIO_TEST": indice},
+            "totale": indice,
+        }
+        for indice in range(1, 13)
+    ]
 
 
 class ClientSharePointFinto:
@@ -113,8 +124,9 @@ class TestVariazioneD1(unittest.TestCase):
                 periodo_corrente,
                 cartella,
                 totali_precedenti,
+                _dettaglio_smartphone(),
             )
-            workbook = load_workbook(corrente, data_only=True)
+            workbook = load_workbook(corrente, data_only=False)
             try:
                 foglio = workbook[main.NOME_FOGLIO_OUTPUT]
                 self.assertEqual(foglio["B3"].value, "TST")
@@ -129,6 +141,13 @@ class TestVariazioneD1(unittest.TestCase):
                 self.assertEqual(foglio["D12"].font.color.rgb, "FF008000")
                 self.assertEqual(foglio["C4"].fill.fgColor.rgb, "FFE7E6E6")
                 self.assertEqual(foglio["D4"].fill.fgColor.rgb, "FFE7E6E6")
+                dettaglio = workbook[main.NOME_FOGLIO_DETTAGLIO_SMARTPHONE]
+                self.assertEqual(dettaglio["B3"].value, "DETTAGLIO TELEFONI")
+                self.assertEqual(dettaglio["C3"].value, "TST")
+                self.assertEqual(dettaglio["D3"].value, "TOT.")
+                self.assertEqual(dettaglio["C4"].value, "=+SUM(C5:C16)")
+                self.assertEqual(dettaglio["B5"].value, "Voce 1")
+                self.assertEqual(dettaglio["C16"].value, 12)
             finally:
                 workbook.close()
         finally:

@@ -10,6 +10,8 @@ build/
 # Cache Python
 __pycache__/
 *.pyc
+scripts/**/node_modules/
+scripts/**/node.exe
 
 # Config locali (solo se davvero locali)
 .env

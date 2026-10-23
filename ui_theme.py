@@ -288,6 +288,7 @@ ACTIVITY_ICONS = {
     "estrai_file_gara": ("files", "#3B82F6"),
     "forecast_business": ("chart", "#8B5CF6"),
     "appuntamenti_settimanali": ("today", "#EC4899"),
+    "performance_management_crm": ("chart", "#D7192D"),
     "elabora_cb": ("process", "#F59E0B"),
     "formatta_pedonalita": ("process", "#F59E0B"),
     "cruscotto_tracciamento": ("all", "#10B981"),

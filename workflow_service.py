@@ -5,6 +5,7 @@ import fnmatch
 import json
 from pathlib import Path
 import threading
+import time
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal, Slot, Qt
@@ -113,6 +114,9 @@ class WorkflowManager(QObject):
         self.run_id = None
         self.index = 0
         self.step_states = []
+        self.step_run_ids = []
+        self.started_at = self.ended_at = None
+        self.error_message = ""
         self.cancel_requested = False
         self.pending = False
         self.finishing = False
@@ -136,6 +140,7 @@ class WorkflowManager(QObject):
             callback(result[1])
         else:
             self.message = f"Workflow fermato: errore di controllo o salvataggio ({result[1]})."
+            self.error_message = self.message
             if self.finishing:
                 self._release("errore")
             else:
@@ -154,6 +159,9 @@ class WorkflowManager(QObject):
         self.finishing = False
         self.workflow, self.run_id, self.index = workflow, uuid4().hex, 0
         self.step_states = ["In attesa"] * len(workflow["steps"])
+        self.step_run_ids = [None] * len(workflow["steps"])
+        self.started_at, self.ended_at = time.monotonic(), None
+        self.error_message = ""
         self.outcome, self.message = "in_esecuzione", "Preparazione workflow…"
         self.changed.emit()
         self._async(lambda: self.execution.history.start_workflow(self.run_id, workflow["name"], workflow["steps"]),
@@ -196,12 +204,21 @@ class WorkflowManager(QObject):
         self.changed.emit()
         if not self.execution.start(activity, owner=self, workflow_run_id=self.run_id, step_index=self.index):
             self.step_states[self.index] = "Errore"
+            self.error_message = "Impossibile avviare il passaggio selezionato."
             self._finish("errore")
 
     def _step_done(self, result):
         if not self.active or self.execution.workflow_owner is not self:
             return
+        if result.get("workflow_run_id") != self.run_id or result.get("step_index") != self.index:
+            return
+        self.step_run_ids[self.index] = result["id"]
         outcome = "interrotto" if self.cancel_requested else result["outcome"]
+        if outcome == "errore":
+            title = self.activities[self.workflow["steps"][self.index]["activity_id"]].title
+            code = result.get("exit_code")
+            self.error_message = f"Errore nel passaggio {self.index + 1}: {title}. " + (
+                f"Codice di uscita: {code}. Consulta i log." if code else "Consulta i log per i controlli di esecuzione e output.")
         self.step_states[self.index] = {"completato": "Completato", "errore": "Errore", "interrotto": "Interrotto"}[outcome]
         self.changed.emit()
         if outcome != "completato":
@@ -217,9 +234,17 @@ class WorkflowManager(QObject):
 
     def _release(self, outcome):
         self.active = False
+        self.ended_at = time.monotonic()
+        for index, state in enumerate(self.step_states):
+            if state in ("In esecuzione", "Verifica in corso"):
+                self.step_states[index] = "Errore" if outcome == "errore" else "Interrotto"
+            elif state == "In attesa":
+                self.step_states[index] = "Saltato"
         self.outcome = outcome
         self.message = {"completato": "Workflow completato.", "errore": "Workflow fallito. Consulta lo storico.",
                         "interrotto": "Workflow interrotto dall'utente o dalla chiusura della sessione."}[outcome]
+        if self.error_message:
+            self.message += " " + self.error_message
         self.execution.workflow_owner = None
         self.execution.profile_lock.unlock()
         self.changed.emit()

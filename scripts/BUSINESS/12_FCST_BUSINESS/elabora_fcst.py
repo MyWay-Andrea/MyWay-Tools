@@ -53,7 +53,7 @@ def main(f_g, f_o, f_a):
     df_gara_formattato = formatta_df(df_gara)
     df_oppo_formattato = formatta_df(df_oppo)
     df_appu_formattato = formatta_df(df_appu)
-    print(Fore.GREEN + "✓ " + Fore.RESET + f"df formattati corretamente")
+    print(Fore.GREEN + "OK " + Fore.RESET + "df formattati correttamente")
 
     return df_gara_formattato, df_oppo_formattato, df_appu_formattato
 

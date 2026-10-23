@@ -7,9 +7,7 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-LOCAL_ENV_PATH = Path(os.environ.get("APPDATA", SCRIPT_DIR)) / "MyWayTools" / ".env"
-BUNDLED_ENV_PATH = SCRIPT_DIR / ".env"
-ENV_PATH = BUNDLED_ENV_PATH if BUNDLED_ENV_PATH.is_file() else LOCAL_ENV_PATH
+ENV_PATH = SCRIPT_DIR / ".env"
 
 
 def carica_env(percorso: Path = ENV_PATH) -> Path:

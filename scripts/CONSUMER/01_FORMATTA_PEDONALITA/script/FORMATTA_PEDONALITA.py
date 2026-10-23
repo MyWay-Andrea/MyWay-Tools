@@ -2,7 +2,11 @@ import pandas as pd
 from io import BytesIO
 from colorama import Fore, init, Style
 import re
-from prepara_pedonalita import main as prepara_file_da_aggregare, seleziona_colonne
+from prepara_pedonalita import (
+    main as prepara_file_da_aggregare,
+    seleziona_colonne,
+    normalizza_nomi_negozi,
+)
 from config import (
     trova_database_pedonalita,
     salva_database_pedonalita,
@@ -25,7 +29,7 @@ def verifica_conformità(df_1, df_2):
 def aggrega_df(df_1, df_2):
     df_agg = pd.concat([df_1, df_2],  
                        ignore_index = True)
-    len_prima = len(df_1)
+    len_prima = len(df_1.drop_duplicates(subset=["Negozio", "Data", "Ora"]))
     df_agg = df_agg.drop_duplicates(subset = ["Negozio", "Data", "Ora"], keep = "last")
     len_dopo = len(df_agg)
     nuovi_record = len_dopo - len_prima
@@ -40,6 +44,7 @@ def main(file_db, df_ped_lav):
 
     df_ped_DB = pd.read_parquet(BytesIO(file_db["content"]))
     df_ped_DB["Data"] = pd.to_datetime(df_ped_DB["Data"])
+    df_ped_DB = normalizza_nomi_negozi(df_ped_DB)
     
     if not "Giorno_num" in df_ped_DB.columns:
         mappa_giorni = {

@@ -1,16 +1,37 @@
 import pandas as pd
 import sys
 from io import BytesIO
+from pathlib import Path
 
-from config import NEGOZIO_CONDITION, COLONNE_ORDINATE, trova_raw_pedonalita
+from config import COLONNE_ORDINATE, trova_raw_pedonalita
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[3]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from CONSUMER.common.negozi import (
+    carica_codici_dealer_pedonalita,
+    normalizza_nomi_negozi,
+)
 
 
 #AGGIUNGI NEGOZIO N BASE AL CODICE
 #-------------------------------------------------------------------------
 def aggiungi_negozio(df):
-    df["Cod.Dealer"] = df["Cod.Dealer"].astype(str).str.strip()
-    df["Negozio"] = df["Cod.Dealer"].map(NEGOZIO_CONDITION)
-    subset = df[df["Negozio"].notna()]
+    codici_dealer = carica_codici_dealer_pedonalita()
+    df["Cod.Dealer"] = df["Cod.Dealer"].astype("string").str.strip().str.upper()
+    df["Negozio"] = df["Cod.Dealer"].map(codici_dealer)
+
+    codici_non_configurati = sorted(
+        df.loc[df["Negozio"].isna(), "Cod.Dealer"].dropna().unique().tolist()
+    )
+    if codici_non_configurati:
+        print(
+            "[PEDONALITA] Codici dealer non configurati ed esclusi: "
+            + ", ".join(codici_non_configurati)
+        )
+
+    subset = df[df["Negozio"].notna()].copy()
 
     return subset
 

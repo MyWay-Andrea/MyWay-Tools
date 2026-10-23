@@ -21,6 +21,7 @@ script_datas = [
     ('scripts/BUSINESS/12_FCST_BUSINESS', 'scripts/BUSINESS/12_FCST_BUSINESS'),
     ('scripts/BUSINESS/13_ESTRAI_FILE_GARA', 'scripts/BUSINESS/13_ESTRAI_FILE_GARA'),
     ('scripts/BUSINESS/14_ELABORA_CB', 'scripts/BUSINESS/14_ELABORA_CB'),
+    ('scripts/BUSINESS/15_PERFORMANCE_MANAGEMENT_CRM', 'scripts/BUSINESS/15_PERFORMANCE_MANAGEMENT_CRM'),
     ('scripts/BUSINESS/CAMPAGNE', 'scripts/BUSINESS/CAMPAGNE'),
     ('scripts/CONSUMER/common', 'scripts/CONSUMER/common'),
     ('scripts/CONSUMER/config', 'scripts/CONSUMER/config'),
