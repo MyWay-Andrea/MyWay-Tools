@@ -40,6 +40,7 @@ class WorkspaceTests(unittest.TestCase):
         self.raw.mkdir()
         self.env = patch.dict(os.environ)
         self.env.start()
+        os.environ["APPDATA"] = str(self.root)
         self.window = menu.OperationsWindow(self.root, self.raw)
         self.window.showNormal()
         self.window.resize(1280, 800)
@@ -61,7 +62,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertTrue(predicate(), "Timed out waiting for a GUI/worker signal")
 
     def test_sections_search_selection_and_empty_state(self):
-        for section, count in {"today": 7, "all": 18, "business": 8, "consumer": 6, "campaigns": 4}.items():
+        for section, count in {"today": 5, "all": 18, "business": 8, "consumer": 6, "campaigns": 4}.items():
             self.window.sidebar.buttons[section].click()
             self.assertEqual(len(self.window.hub.buttons), count)
             self.assertTrue(self.window.sidebar.buttons[section].isChecked())
@@ -81,6 +82,24 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIs(self.window.pages.currentWidget(), self.window.files_page)
         self.window.sidebar.buttons["today"].click()
         self.assertIs(self.window.pages.currentWidget(), self.window.hub)
+
+    def test_favorite_star_does_not_select_or_launch(self):
+        from operational_preferences import DEFAULT_FAVORITES, Favorites
+        hub = self.window.hub
+        self.assertEqual([a.activity_id for a in hub.visible_activities()], DEFAULT_FAVORITES)
+        self.window.show_page("all")
+        selected = hub.detail.activity
+        row = next(b for b in hub.buttons if b.activity.activity_id == "elabora_cb")
+        with patch.object(menu, "lancia_script") as launch:
+            row.star.click()
+            self.assertIs(hub.detail.activity, selected)
+            launch.assert_not_called()
+        self.window.show_page("today")
+        self.assertEqual(len(hub.buttons), 6)
+        hub.buttons[-1].star.click()
+        self.assertEqual(len(hub.buttons), 5)
+        loaded = Favorites([a.activity_id for a in self.window.activities], self.window.favorites.path)
+        self.assertEqual(loaded.ids, DEFAULT_FAVORITES)
 
     def test_script_bindings_and_lock_across_refresh_and_navigation(self):
         with patch.object(menu, "lancia_script") as launch:
@@ -273,7 +292,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_real_entrypoint_and_updater_hook(self):
         profile = self.root / "MyWayTools"
-        profile.mkdir()
+        profile.mkdir(exist_ok=True)
         (profile / "config.json").write_text(json.dumps({
             "sharepoint_root": str(self.root), "raw_files_path": str(self.raw)}))
         (profile / ".env").write_text("")  # Prevent access to real secrets.

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from updater import get_asset
 from ui_theme import Theme, WORKSPACE_QSS, TERMINAL_QSS, role, set_tone, line_icon
 from ui_widgets import ElidedLabel
+from operational_preferences import Favorites
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
@@ -2382,6 +2383,7 @@ class ActivitySpec:
     instructions: str = ""
     remote_check: str | None = None
     expected_count: int = 1
+    activity_id: str = ""
 
     @property
     def available(self):
@@ -2411,9 +2413,15 @@ class ActivitySpec:
 class ActivityListButton(QPushButton):
     """Compact, keyboard-accessible row; Qt paints hover, selection and focus."""
 
-    def __init__(self, activity, callback, parent=None):
+    def __init__(self, activity, callback, parent=None, favorites=None):
         super().__init__(parent)
         self.activity = activity
+        self.favorites = favorites
+        self.star = role(QPushButton(self), "iconButton")
+        self.star.setFixedSize(32, 32)
+        self.star.clicked.connect(self.toggle_favorite)
+        self.star.setVisible(favorites is not None)
+        self.refresh_star()
         self.state_text = ""
         self.state_color = Theme.MUTED
         role(self, "activity")
@@ -2432,6 +2440,23 @@ class ActivityListButton(QPushButton):
 
     def minimumSizeHint(self):
         return QSize(180, Theme.ROW_HEIGHT)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.star.move(self.width() - 38, 21)
+
+    def refresh_star(self):
+        selected = bool(self.favorites and self.activity.activity_id in self.favorites.ids)
+        self.star.setIcon(line_icon("star_filled" if selected else "star", "#C18B22"))
+        label = "Rimuovi dai preferiti" if selected else "Aggiungi ai preferiti"
+        self.star.setToolTip(label)
+        self.star.setAccessibleName(f"{label}: {self.activity.title}")
+
+    def toggle_favorite(self):
+        try:
+            self.favorites.toggle(self.activity.activity_id)
+        except OSError:
+            QMessageBox.warning(self, "Preferiti", "Impossibile salvare le preferenze. Controlla l'accesso alla cartella del profilo.")
 
     def refresh_text(self, running=False):
         ready, message = self.activity.readiness()
@@ -2454,7 +2479,7 @@ class ActivityListButton(QPushButton):
         super().paintEvent(event)
         painter = QPainter(self)
         self.row_icon.paint(painter, QRect(12, 25, 24, 24))
-        left, width = 48, max(1, self.width() - 62)
+        left, width = 48, max(1, self.width() - 92)
         for text, y, size, weight, color in (
             (self.activity.title, 8, 14, QFont.DemiBold, Theme.TEXT),
             (self.activity.description, 29, 12, QFont.Normal, Theme.MUTED),
@@ -2671,9 +2696,12 @@ class ActivityDetailPanel(QFrame):
 
 
 class ModernHubPage(QWidget):
-    def __init__(self, activities, parent=None, header=None):
+    def __init__(self, activities, parent=None, header=None, favorites=None):
         super().__init__(parent)
         self.activities = activities
+        self.favorites = favorites
+        if favorites:
+            favorites.changed.connect(self.rebuild)
         self.current_filter = "today"
         self.buttons = []
         self.setObjectName("hub")
@@ -2739,7 +2767,8 @@ class ModernHubPage(QWidget):
         query = self.search.text().strip().casefold()
         items = self.activities
         if self.current_filter == "today":
-            items = [a for a in items if a.number <= 7]
+            by_id = {a.activity_id: a for a in items}
+            items = [by_id[key] for key in self.favorites.ids if key in by_id]
         elif self.current_filter in ("business", "consumer", "campaigns"):
             category = "Campagne" if self.current_filter == "campaigns" else self.current_filter.title()
             items = [a for a in items if a.category == category]
@@ -2761,12 +2790,12 @@ class ModernHubPage(QWidget):
         items = self.visible_activities()
         self.count_label.setText(f"{len(items)} attività")
         for activity in items:
-            button = ActivityListButton(activity, self.select_activity)
+            button = ActivityListButton(activity, self.select_activity, favorites=self.favorites)
             self.buttons.append(button)
             self.group.addButton(button)
             self.list_box.addWidget(button)
         if not items:
-            empty = role(QLabel("Nessuna attività trovata.\nProva un altro termine di ricerca."), "secondary")
+            empty = role(QLabel("Nessuna attività trovata.\nCambia ricerca o aggiungi preferiti dalla sezione Tutte le attività."), "secondary")
             empty.setWordWrap(True)
             empty.setContentsMargins(12, 24, 12, 24)
             self.list_box.addWidget(empty)
@@ -2843,7 +2872,10 @@ class OperationsWindow(QMainWindow):
         self.header = WorkspaceHeader()
         self.terminal = TerminaleWidget()
         self.activities = self._build_activities()
-        self.hub = ModernHubPage(self.activities, header=self.header)
+        self.favorites = Favorites([a.activity_id for a in self.activities], parent=self)
+        self.hub = ModernHubPage(self.activities, header=self.header, favorites=self.favorites)
+        if self.favorites.warning:
+            self.terminal.write_safe(self.favorites.warning + "\n", C_LOG_WARN)
         self.files_page = FilesPage(self.paths, self.set_raw_folder)
         self.hub.detail.files_requested.connect(lambda: self.show_page("files"))
         self.hub.detail.add_files_requested.connect(self.files_page.raw_files_widget._carica_file)
@@ -2888,13 +2920,27 @@ class OperationsWindow(QMainWindow):
             ("Formatta magazzino", "Classifica e prepara il file valore del magazzino.", "Consumer", p["FORMATTA_MAGAZZINO"], p["RAW_FILES"], "VALORE_DEL_MAGAZZINO*.csv"),
         ]
         activities = []
+        # IDs are permanent domain keys, independent of display order and titles.
+        ids_by_script_key = {
+            "ESTRAI_FILE_GARA": "estrai_file_gara", "FCST": "forecast_business",
+            "APPUNTAMENTI_SETTIMANA": "appuntamenti_settimanali", "ELABORA_CB": "elabora_cb",
+            "FORMATTA_PEDONALITA": "formatta_pedonalita", "CRUSCOTTO_TRACCIAMENTO": "cruscotto_tracciamento",
+            "CRUSCOTTO_GIORNALIERO": "cruscotto_giornaliero", "REPORT_GIACENZE_SMARTPHONE": "giacenze_smartphone",
+            "DIVIDI_FILE_CAMPAGNE": "dividi_file_campagne", "AGGREGA_FILE_VENDITORI": "aggrega_file_venditori",
+            "PRESA_IN_CARICO": "presa_in_carico", "REPORT_CAMPAGNE": "report_campagne",
+            "FORMATTA_GARA": "formatta_gara", "FORMATTA_APPUNTAMENTI": "formatta_appuntamenti",
+            "FORMATTA_OPPORTUNITA": "formatta_opportunita", "CHIUSURA_GARA": "chiusura_gara",
+            "REPORT_PEDONALITA": "report_pedonalita", "FORMATTA_MAGAZZINO": "formatta_magazzino",
+        }
+        ids_by_path = {p[key]: value for key, value in ids_by_script_key.items()}
         for i, row in enumerate(rows, 1):
             title, description, category, script, *options = row
             options += [None] * (5 - len(options))
             folder, filename, instructions, remote_check, expected_count = options[:5]
             activities.append(ActivitySpec(
                 i, title, description, category, script, self.terminal,
-                folder, filename, instructions or "", remote_check, expected_count or 1))
+                folder, filename, instructions or "", remote_check, expected_count or 1,
+                ids_by_path[script]))
         return activities
 
     def show_page(self, name):

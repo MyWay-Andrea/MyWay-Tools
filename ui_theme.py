@@ -147,7 +147,19 @@ class _LineIcon(QIconEngine):
         painter.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         painter.setBrush(Qt.NoBrush)
         name = self.name
-        if name in ("today", "business"):
+        if name in ("star", "star_filled"):
+            import math
+            path = QPainterPath()
+            for i in range(10):
+                angle = math.pi * i / 5 - math.pi / 2
+                radius = 9 if i % 2 == 0 else 4
+                x, y = 12 + radius * math.cos(angle), 12 + radius * math.sin(angle)
+                path.moveTo(x, y) if i == 0 else path.lineTo(x, y)
+            path.closeSubpath()
+            if name == "star_filled":
+                painter.setBrush(QColor(color))
+            painter.drawPath(path)
+        elif name in ("today", "business"):
             painter.drawRoundedRect(QRectF(4, 6, 16, 15 if name == "today" else 13), 2, 2)
             if name == "today":
                 painter.drawLine(4, 11, 20, 11)
