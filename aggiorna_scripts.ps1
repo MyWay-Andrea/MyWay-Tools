@@ -41,6 +41,32 @@ $fileCondivisi = @(
     "graph_sharepoint.py"
 )
 
+function Remove-File-Locali {
+    param([Parameter(Mandatory = $true)][string]$Radice)
+
+    $directoryEscluse = @(
+        ".git", ".hg", ".svn", "__pycache__", ".pytest_cache__", ".mypy_cache",
+        ".ruff_cache", ".tox", ".nox", ".venv", "venv", "env", "node_modules",
+        "build", "dist"
+    )
+    $fileLocaleRegex = '^(?:\.env(?:\..*)?|.*\.(?:pem|key|pfx|p12|p8|kdbx|pyc|pyo|tmp|bak|swp)|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|(?:credentials?|secrets?|tokens?)(?:\..*)?|thumbs\.db|\.ds_store)$'
+
+    $directoryDaEliminare = Get-ChildItem -LiteralPath $Radice -Directory -Recurse -Force |
+        Where-Object { $directoryEscluse -contains $_.Name.ToLowerInvariant() } |
+        Sort-Object { $_.FullName.Length } -Descending
+
+    foreach ($directory in $directoryDaEliminare) {
+        Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+    }
+
+    $fileDaEliminare = Get-ChildItem -LiteralPath $Radice -File -Recurse -Force |
+        Where-Object { $_.Name -match $fileLocaleRegex }
+
+    foreach ($file in $fileDaEliminare) {
+        Remove-Item -LiteralPath $file.FullName -Force
+    }
+}
+
 $mancanti = @()
 foreach ($elemento in @($cartelle + $fileCondivisi)) {
     if (-not (Test-Path -LiteralPath (Join-Path $origineRisolta $elemento))) {
@@ -82,6 +108,10 @@ try {
         }
     }
 
+    # Rimuove ricorsivamente credenziali, cache e artefatti locali dalle cartelle
+    # selezionate prima che arrivino nel repository o nell'installer.
+    Remove-File-Locali -Radice $temporanea
+
     Get-ChildItem -LiteralPath $destinazioneRisolta -Force |
         Where-Object { $_.Name -ne ".env" } |
         Remove-Item -Recurse -Force
@@ -94,4 +124,5 @@ finally {
 }
 
 Write-Host "Cartella scripts aggiornata con i soli progetti usati dal menu."
-Write-Host "Il file locale scripts\.env, se presente, e' stato conservato."
+Write-Host "Credenziali, cache e file locali sono stati esclusi ricorsivamente."
+Write-Host "Il file locale scripts\.env, se presente, e' stato conservato ma non sara' incluso nell'installer."
