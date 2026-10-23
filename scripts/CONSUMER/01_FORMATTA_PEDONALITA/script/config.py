@@ -41,7 +41,6 @@ def _drive_sharepoint():
         raise ValueError("Configurazione SharePoint Pedonalita incompleta: " + ", ".join(mancanti))
     if _GRAPH_CLIENT is None:
         _GRAPH_CLIENT = GraphSharePointClient()
-    if _GRAPH_DRIVE_ID is None:
         sito = _GRAPH_CLIENT.trova_sito(SHAREPOINT_HOSTNAME, SHAREPOINT_SCAMBIO_SITE_PATH)
         raccolta = _GRAPH_CLIENT.trova_raccolta_documenti(
             sito["id"], SHAREPOINT_SCAMBIO_LIBRARY_NAME

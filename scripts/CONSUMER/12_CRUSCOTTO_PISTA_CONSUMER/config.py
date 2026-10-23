@@ -52,10 +52,15 @@ EMAIL_DESTINATARI = tuple(
 )
 # Se true: non invia email, non carica il report su SharePoint, non elimina i
 # file RAW e salva il report nella cartella "output" accanto al codice.
-TEST_RUN = os.getenv("CONSUMER_TEST_RUN", "true").strip().casefold()
+TEST_RUN = os.getenv(
+    "CRUSCOTTO_PISTA_CONSUMER_TEST_RUN", "true"
+).strip().casefold()
 if TEST_RUN not in {"true", "false"}:
-    raise ValueError("CONSUMER_TEST_RUN deve essere 'true' oppure 'false'")
+    raise ValueError(
+        "CRUSCOTTO_PISTA_CONSUMER_TEST_RUN deve essere 'true' oppure 'false'"
+    )
 TEST_RUN = TEST_RUN == "true"
+TEST_OUTPUT_FOLDER = Path.home() / "Downloads"
 
 # Microsoft Graph - applicazione dedicata alle automazioni SharePoint.
 SHAREPOINT_GRAPH_CLIENT_ID = os.getenv("SHAREPOINT_GRAPH_CLIENT_ID", "").strip()

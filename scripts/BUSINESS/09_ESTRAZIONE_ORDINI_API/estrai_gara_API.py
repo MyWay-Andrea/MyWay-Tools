@@ -321,7 +321,7 @@ def main():
 
         stato           = STAGE_MAP.get(o.get("stage"), o.get("stage"))
 
-        tipo_rel_maped  = TIPO_RELAZIONE_MAP[tipo_relazione]
+        tipo_rel_maped  = TIPO_RELAZIONE_MAP.get(tipo_relazione, tipo_relazione)
 
         for row in o.get("rows", []):
             '''le asseegnazioni all'interno del ciclo sono RELATIVE alle RIGHE ORDINE'''

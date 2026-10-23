@@ -4,6 +4,7 @@ from io import BytesIO
 from datetime import datetime
 
 import pandas as pd
+import requests
 from colorama import Fore, init
 
 from archivio_storico import (
@@ -12,6 +13,7 @@ from archivio_storico import (
     chiudi_periodi_precedenti,
     leggi_archivio,
     prepara_blocco,
+    riconcilia_periodo_chiuso,
     riepilogo_archivio,
     salva_archivio_atomico,
     vista_excel,
@@ -20,6 +22,7 @@ from config import (
     FILE_STORICO_GARA_PARQUET,
     PATH_BASI_DATI,
     PATH_BACKUP_STORICO_GARA_XLSX,
+    PATH_CHIUSURA_GARA,
     PATH_STORICO_BASI_DATI,
     PATH_STORICO_PARQUET,
     carica_su_teams,
@@ -47,23 +50,62 @@ def _backup_excel(file_storico):
     )
 
 
-def _trova_chiusura_apr_giu():
-    candidati = [
-        file for file in elenca_file_sharepoint(PATH_BASI_DATI, crea=True)
-        if "chiusura_gara_" in str(file.get("name", "")).casefold()
-        and "apr_giu" in str(file.get("name", "")).casefold()
-        and str(file.get("name", "")).casefold().endswith(".xlsx")
+def _nome_file_chiusura(anno, trimestre):
+    periodi_file = {
+        1: "Gen_Mar",
+        2: "Apr_Giu",
+        3: "Lug_Set",
+        4: "Ott_Dic",
+    }
+    return f"CHIUSURA_GARA_{int(anno)}_{periodi_file[int(trimestre)]}.xlsx"
+
+
+def _periodo_precedente(anno, trimestre):
+    if int(trimestre) == 1:
+        return int(anno) - 1, 4
+    return int(anno), int(trimestre) - 1
+
+
+def _trova_chiusura_periodo(anno, trimestre, obbligatorio=True):
+    nome_atteso = _nome_file_chiusura(anno, trimestre)
+    # Il nome storico della cartella contiene il refuso "CHISUSURA".
+    # Manteniamo il fallback per riconciliare anche i file gia archiviati.
+    cartelle = [
+        PATH_CHIUSURA_GARA,
+        f"{PATH_STORICO_BASI_DATI}/BACKUP_CHISUSURA_GARE",
+        PATH_BASI_DATI,
     ]
+    candidati = []
+    for cartella in dict.fromkeys(cartelle):
+        try:
+            file_cartella = elenca_file_sharepoint(cartella)
+        except (FileNotFoundError, requests.HTTPError) as exc:
+            if (
+                isinstance(exc, requests.HTTPError)
+                and exc.response is not None
+                and exc.response.status_code != 404
+            ):
+                raise
+            continue
+        candidati.extend(
+            (file, cartella)
+            for file in file_cartella
+            if str(file.get("name", "")).casefold() == nome_atteso.casefold()
+        )
     candidati.sort(
-        key=lambda file: str(file.get("lastModifiedDateTime", "")), reverse=True
+        key=lambda elemento: str(
+            elemento[0].get("lastModifiedDateTime", "")
+        ),
+        reverse=True,
     )
     if not candidati:
-        raise FileNotFoundError(
-            "File CHIUSURA_GARA_Apr_Giu.xlsx non trovato in "
-            f"{PATH_BASI_DATI}"
-        )
-    scelto = candidati[0]
-    return scarica_file_sharepoint(PATH_BASI_DATI, scelto["name"])
+        if obbligatorio:
+            raise FileNotFoundError(
+                f"File {nome_atteso} non trovato in {PATH_CHIUSURA_GARA}"
+            )
+        return None
+    scelto, cartella_scelta = candidati[0]
+    return scarica_file_sharepoint(cartella_scelta, scelto["name"])
 
 
 def _inizializza_archivio(df_gara, file_storico):
@@ -77,7 +119,8 @@ def _inizializza_archivio(df_gara, file_storico):
     ].astype(str).str.startswith("TR4000", na=False)
     storico_legacy = storico_excel.loc[~mask_nuovo_crm].copy()
 
-    file_chiusura = _trova_chiusura_apr_giu()
+    anno_corrente = datetime.today().year
+    file_chiusura = _trova_chiusura_periodo(anno_corrente, 2)
     print(f"Caricamento chiusura: {file_chiusura['name']}")
     chiusura_apr_giu = pd.read_excel(BytesIO(file_chiusura["content"]), dtype=str)
 
@@ -90,7 +133,7 @@ def _inizializza_archivio(df_gara, file_storico):
         chiusura_apr_giu,
         fonte="CHIUSURA_GARA",
         stato_archivio="CHIUSO",
-        anno_default=datetime.today().year,
+        anno_default=anno_corrente,
         trimestre_default=2,
     )
 
@@ -142,6 +185,36 @@ def _carica_o_migra(df_gara, file_storico):
                 anno_corrente=inizio.year,
                 trimestre_corrente=trimestre_corrente,
             )
+            anno_precedente, trimestre_precedente = _periodo_precedente(
+                inizio.year,
+                trimestre_corrente,
+            )
+            file_chiusura = _trova_chiusura_periodo(
+                anno_precedente,
+                trimestre_precedente,
+                obbligatorio=False,
+            )
+            if file_chiusura:
+                df_chiusura = pd.read_excel(
+                    BytesIO(file_chiusura["content"]),
+                    dtype=str,
+                )
+                archivio_esistente = riconcilia_periodo_chiuso(
+                    archivio_esistente,
+                    df_chiusura,
+                    anno_precedente,
+                    trimestre_precedente,
+                )
+                print(
+                    "Riconciliazione chiusura: "
+                    f"{file_chiusura['name']} ({len(df_chiusura)} righe)"
+                )
+            else:
+                print(
+                    "ATTENZIONE: file di chiusura non trovato per "
+                    f"{anno_precedente} Q{trimestre_precedente}; "
+                    "il periodo e stato chiuso senza riconciliazione."
+                )
             return aggiorna_archivio(
                 archivio_esistente,
                 blocco_api,

@@ -292,6 +292,18 @@ def chiudi_periodi_precedenti(archivio, anno_corrente, trimestre_corrente):
         + risultato["Trimestre Gara"].astype("Int64")
     )
     periodo_corrente = int(anno_corrente) * 10 + int(trimestre_corrente)
+
+    # Una riga senza Data Attivazione non appartiene ancora a una gara chiusa:
+    # slitta nel periodo corrente finche l'attivazione non viene valorizzata.
+    da_riportare = (
+        risultato["Stato Archivio"].eq("CORRENTE")
+        & risultato["Data Attivazione"].isna()
+        & periodo_numerico.lt(periodo_corrente)
+    )
+    risultato.loc[da_riportare, "Anno Gara"] = int(anno_corrente)
+    risultato.loc[da_riportare, "Trimestre Gara"] = int(trimestre_corrente)
+    risultato.loc[da_riportare, "Periodo Gara"] = PERIODI[int(trimestre_corrente)]
+
     da_chiudere = (
         risultato["Stato Archivio"].eq("CORRENTE")
         & risultato["Data Attivazione"].notna()
@@ -299,6 +311,63 @@ def chiudi_periodi_precedenti(archivio, anno_corrente, trimestre_corrente):
     )
     risultato.loc[da_chiudere, "Stato Archivio"] = "CHIUSO"
     risultato.loc[da_chiudere, "Data Chiusura Gara"] = pd.Timestamp.now()
+    return risultato[SCHEMA_ARCHIVIO]
+
+
+def riconcilia_periodo_chiuso(
+    archivio,
+    df_chiusura,
+    anno,
+    trimestre,
+    data_elaborazione=None,
+):
+    """Sostituisce un periodo storico con il relativo snapshot di chiusura."""
+    anno = int(anno)
+    trimestre = int(trimestre)
+    blocco_chiusura = prepara_blocco(
+        df_chiusura,
+        fonte="CHIUSURA_GARA",
+        stato_archivio="CHIUSO",
+        data_elaborazione=data_elaborazione,
+        anno_default=anno,
+        trimestre_default=trimestre,
+    )
+
+    fuori_periodo = ~(
+        blocco_chiusura["Anno Gara"].eq(anno)
+        & blocco_chiusura["Trimestre Gara"].eq(trimestre)
+    )
+    if fuori_periodo.any():
+        raise ValueError(
+            "Il file di chiusura contiene "
+            f"{int(fuori_periodo.sum())} righe fuori dal periodo "
+            f"{anno} Q{trimestre}."
+        )
+    if blocco_chiusura["Chiave Archivio"].duplicated().any():
+        raise ValueError(
+            f"Il file di chiusura {anno} Q{trimestre} contiene chiavi duplicate."
+        )
+
+    stesso_periodo = (
+        archivio["Anno Gara"].eq(anno)
+        & archivio["Trimestre Gara"].eq(trimestre)
+    )
+    archivio_senza_periodo = archivio.loc[~stesso_periodo].copy()
+    collisioni = set(archivio_senza_periodo["Chiave Archivio"].dropna()).intersection(
+        blocco_chiusura["Chiave Archivio"].dropna()
+    )
+    if collisioni:
+        raise ValueError(
+            "La chiusura genera chiavi gia presenti in altri periodi: "
+            + ", ".join(map(str, list(collisioni)[:10]))
+        )
+
+    risultato = pd.concat(
+        [archivio_senza_periodo, blocco_chiusura],
+        ignore_index=True,
+    )
+    if risultato["Chiave Archivio"].duplicated().any():
+        raise ValueError("La riconciliazione ha generato chiavi duplicate.")
     return risultato[SCHEMA_ARCHIVIO]
 
 

@@ -9,7 +9,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 
-from config import CROSS_SELLING, MAPPA_PEDONALITA
+from config import CROSS_SELLING, MAPPA_PEDONALITA, ORDINE_NEGOZI
 
 
 @contextmanager
@@ -61,12 +61,17 @@ def _date(serie: pd.Series) -> pd.Series:
 
 
 def _normalizza_negozio(serie: pd.Series) -> pd.Series:
-    return (
+    normalizzata = (
         _testo(serie)
         .str.upper()
         .str.replace("_", " ", regex=False)
         .str.replace(r"\s+", " ", regex=True)
     )
+    nomi_canonici = {
+        str(negozio).upper().replace("_", " "): negozio
+        for negozio in ORDINE_NEGOZI
+    }
+    return normalizzata.map(nomi_canonici).fillna(normalizzata)
 
 
 def carica_business(file_remoto: dict, client_sharepoint) -> tuple[pd.DataFrame, pd.DataFrame]:

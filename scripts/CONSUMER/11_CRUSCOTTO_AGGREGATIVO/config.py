@@ -61,8 +61,13 @@ SHAREPOINT_CONSUMER_LIBRARY_NAME = os.getenv(
 SHAREPOINT_PEDONALITA_FOLDER = os.getenv(
     "SHAREPOINT_SCAMBIO_PARQUET_FOLDER", ""
 ).strip(" /")
-SHAREPOINT_CRUSCOTTO_AGGREGATIVO_OUTPUT_FOLDER = os.getenv(
-    "SHAREPOINT_CRUSCOTTO_AGGREGATIVO_OUTPUT_FOLDER", ""
+SHAREPOINT_CRUSCOTTO_AGGREGATIVO_TEAM_FOLDER = os.getenv(
+    "SHAREPOINT_CRUSCOTTO_AGGREGATIVO_TEAM_FOLDER",
+    "TEAM CONSUMER",
+).strip(" /")
+SHAREPOINT_CRUSCOTTO_AGGREGATIVO_MANDELLI_FOLDER = os.getenv(
+    "SHAREPOINT_CRUSCOTTO_AGGREGATIVO_MANDELLI_FOLDER",
+    "CONSUMER - MANDELLI",
 ).strip(" /")
 
 
@@ -86,11 +91,18 @@ def _file_esatto(client_sharepoint, drive_id: str, nome_file: str) -> dict:
 
 
 def trova_sorgenti(client_sharepoint) -> dict[str, object]:
-    mancanti = [
-        f"SHAREPOINT_{negozio}_SITE_PATH"
+    negozi_senza_percorso = [
+        negozio
         for negozio, percorso in SHAREPOINT_NEGOZI_SITE_PATHS.items()
         if not percorso
     ]
+    for negozio in negozi_senza_percorso:
+        print(
+            "  ATTENZIONE "
+            f"{negozio}: manca SHAREPOINT_{negozio}_SITE_PATH; negozio ignorato"
+        )
+
+    mancanti = []
     if not SHAREPOINT_HOSTNAME:
         mancanti.insert(0, "SHAREPOINT_HOSTNAME")
     for nome, valore in {
@@ -158,6 +170,8 @@ def trova_sorgenti(client_sharepoint) -> dict[str, object]:
 
     tracciamenti: dict[str, dict] = {}
     for negozio, site_path in SHAREPOINT_NEGOZI_SITE_PATHS.items():
+        if not site_path:
+            continue
         sito = client_sharepoint.trova_sito(SHAREPOINT_HOSTNAME, site_path)
         raccolta = client_sharepoint.trova_raccolta_documenti(
             sito["id"],
@@ -173,9 +187,12 @@ def trova_sorgenti(client_sharepoint) -> dict[str, object]:
             if str(elemento.get("name", "")).casefold() == nome_atteso.casefold()
         ]
         if not candidati:
-            raise FileNotFoundError(
-                f"{nome_atteso} non trovato nel sito {sito['displayName']}"
+            print(
+                "  ATTENZIONE "
+                f"{negozio}: {nome_atteso} non trovato nel sito "
+                f"{sito['displayName']}; negozio ignorato"
             )
+            continue
         candidati.sort(
             key=lambda elemento: str(elemento.get("lastModifiedDateTime", "")),
             reverse=True,
@@ -197,11 +214,11 @@ def trova_sorgenti(client_sharepoint) -> dict[str, object]:
         "destinazioni": {
             "TEAM CONSUMER": {
                 "drive_id": raccolta_team_consumer["id"],
-                "cartella": SHAREPOINT_CRUSCOTTO_AGGREGATIVO_OUTPUT_FOLDER,
+                "cartella": SHAREPOINT_CRUSCOTTO_AGGREGATIVO_TEAM_FOLDER,
             },
             "CONSUMER MANDELLI": {
                 "drive_id": raccolta_consumer_mandelli["id"],
-                "cartella": SHAREPOINT_CRUSCOTTO_AGGREGATIVO_OUTPUT_FOLDER,
+                "cartella": SHAREPOINT_CRUSCOTTO_AGGREGATIVO_MANDELLI_FOLDER,
             },
         },
     }

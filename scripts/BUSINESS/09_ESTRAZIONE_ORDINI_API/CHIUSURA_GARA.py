@@ -6,9 +6,9 @@ import pandas as pd
 from colorama import Fore, init
 
 from config import (
-    COLONNE_OUTPUT_GARA,
+    COLONNE_CORRETTE_GARA,
     LISTINO_MAP,
-    PATH_BASI_DATI,
+    PATH_CHIUSURA_GARA,
     PERIODO_GARE,
     STAGE_MAP,
     TIPOLOGIA_SERVIZIO_MAP,
@@ -147,7 +147,9 @@ def main():
     print("4. Formattazione e salvataggio...")
     df_formattato = formatta_colonne(df)
     df_formattato = df_formattato[df_formattato["Stato Ordine"] == "Attivato"].copy()
-    df_output = df_formattato[COLONNE_OUTPUT_GARA]
+    # L'ID Riga CRM e la chiave stabile necessaria alla riconciliazione
+    # dello snapshot trimestrale con l'archivio tecnico.
+    df_output = df_formattato[COLONNE_CORRETTE_GARA]
 
     nome_output = nome_file_chiusura(periodo, anno)
     buffer = BytesIO()
@@ -155,7 +157,7 @@ def main():
     buffer.seek(0)
     _formatta_excel(buffer)
     caricato = carica_file_sharepoint(
-        PATH_BASI_DATI,
+        PATH_CHIUSURA_GARA,
         nome_output,
         buffer.getvalue(),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

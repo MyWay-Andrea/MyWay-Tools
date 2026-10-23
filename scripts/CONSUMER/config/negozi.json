@@ -4,19 +4,23 @@
         "GALASSIA",
         "TORRI",
         "EUROSIA",
-        "SASSUOLO",
+        "SASSUOLO_M.POLO",
         "CARPI",
         "BONIFACIO",
-        "MARANELLO"
+        "MARANELLO",
+        "CORSO_VEM",
+        "SASSUOLO_CENTRO"
     ],
     "codici_negozi": {
         "FID": "FIDENZA",
         "PC2": "GALASSIA",
         "TOR": "TORRI",
         "EUR": "EUROSIA",
-        "SAS": "SASSUOLO",
+        "SAS": "SASSUOLO_M.POLO",
         "CAR": "CARPI",
         "SBF": "BONIFACIO",
-        "MAR": "MARANELLO"
+        "MAR": "MARANELLO",
+        "PCC": "CORSO_VEM",
+        "SAC": "SASSUOLO_CENTRO"
     }
 }

@@ -52,17 +52,12 @@ def calcola_kpi(
 ) -> dict[str, pd.DataFrame | pd.Timestamp]:
     riferimento = (riferimento or pd.Timestamp.today()).normalize()
 
-    business_ins = _mese_corrente(business, "DATA_INSERIMENTO", riferimento)
-    # Nel file BUSINESS GIORNALIERO la colonna PUNTI_ATTIVATI
-    # (VALORE PUNTI.1 nel foglio TRACCIAMENTO) è già circoscritta al
-    # periodo corrente dalle formule del file sorgente. Non va filtrata
-    # nuovamente per DATA_ATTIVAZIONE: rettifiche o attivazioni pregresse
-    # valorizzate nel periodo verrebbero escluse dal totale e dai negozi.
-    business_att = _mese_corrente(
-        business,
-        "DATA_ATTIVAZIONE",
-        riferimento,
-    )
+    # BUSINESS GIORNALIERO e' gia' il file del mese corrente. I riepiloghi
+    # ufficiali sommano integralmente le colonne punti, senza filtrare le date:
+    # nel tracciamento possono esserci date pregresse, testuali o non valide
+    # che devono comunque concorrere ai totali inserito e attivato.
+    business_ins = business.copy()
+    business_att = business.copy()
     energia_mese = _mese_corrente(energia, "DATA", riferimento)
     gadget_mese = _mese_corrente(gadget[gadget["DATA"].notna()], "DATA", riferimento)
     digi_mese = _mese_corrente(digi, "DATA", riferimento)
