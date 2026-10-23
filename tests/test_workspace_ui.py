@@ -102,7 +102,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(loaded.ids, DEFAULT_FAVORITES)
 
     def test_script_bindings_and_lock_across_refresh_and_navigation(self):
-        with patch.object(menu, "lancia_script") as launch:
+        with patch.object(menu, "lancia_script", side_effect=lambda *args: menu.global_signals.script_avviato.emit()) as launch:
             for activity in self.window.activities:
                 if not activity.available or activity.filename or activity.remote_check:
                     continue
@@ -117,7 +117,7 @@ class WorkspaceTests(unittest.TestCase):
                 calls = launch.call_count
                 self.detail.run_or_prepare()
                 self.assertEqual(launch.call_count, calls)
-                launch.call_args.args[2](True)
+                menu.global_signals.script_terminato.emit()
                 self.assertFalse(self.detail.busy)
             self.detail.set_activity(next(a for a in self.window.activities if a.title == "Report campagne"))
             self.assertFalse(self.detail.action.isEnabled())
@@ -128,7 +128,7 @@ class WorkspaceTests(unittest.TestCase):
         QTest.keyClick(hub.buttons[0], Qt.Key_Down)
         self.app.processEvents()
         self.assertIs(self.detail.activity, hub.buttons[1].activity)
-        with patch.object(menu, "lancia_script") as launch:
+        with patch.object(menu, "lancia_script", side_effect=lambda *args: menu.global_signals.script_avviato.emit()) as launch:
             self.detail.action.click()
             QTest.qWait(3100)
             self.assertTrue(self.detail.busy)
@@ -136,7 +136,7 @@ class WorkspaceTests(unittest.TestCase):
             self.window.show_page("all")
             hub.search.setText("Elabora CB")
             self.assertFalse(self.detail.action.isEnabled())
-            launch.call_args.args[2](True)
+            menu.global_signals.script_terminato.emit()
             self.assertTrue(self.detail.action.isEnabled())
 
     def test_raw_counts_and_inline_upload(self):
@@ -200,7 +200,7 @@ class WorkspaceTests(unittest.TestCase):
             launch.assert_not_called()
             self.detail.action.click()
             self.assertEqual(launch.call_args.args[0], activity.script)
-            launch.call_args.args[2](True)
+            menu.global_signals.script_terminato.emit()
             self.assertEqual(remote.call_args.kwargs["timeout"], 40)
         with patch.object(menu.subprocess, "run", side_effect=subprocess.TimeoutExpired("check", 40)):
             self.detail.action.click()
@@ -255,6 +255,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(completed, [False])
         self.assertIn("exit 3", self.window.terminal.log.toPlainText())
         menu.lancia_script(self.root / "missing.py", self.window.terminal, completed.append)
+        self.wait_until(lambda: len(completed) == 2)
         self.assertEqual(completed, [False, False])
 
     def test_resize_splitters_and_screenshots(self):

@@ -15,6 +15,8 @@ from updater import get_asset
 from ui_theme import Theme, WORKSPACE_QSS, TERMINAL_QSS, role, set_tone, line_icon, activity_icon
 from ui_widgets import ElidedLabel
 from operational_preferences import Favorites
+from execution_service import ExecutionService
+from operations_views import HistoryPage
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
@@ -536,72 +538,16 @@ def _trova_python() -> str:
 # LANCIA SCRIPT
 # ─────────────────────────────────────────────────────────────
 def lancia_script(nome_script, terminale: TerminaleWidget, on_finished=None):
-    script_path = Path(nome_script).resolve()
-
-    terminale.write_safe("\n", C_LOG_INFO)
-    terminale.write_safe(f"Avvio: {script_path.name}\n", C_LOG_TEXT)
-    terminale.write_safe("─" * 60 + "\n", "#333333")
-
-    if not script_path.is_file():
-        terminale.write_safe(f"❌ File non trovato: {script_path}\n", C_LOG_ERR)
-        terminale.write_safe("─" * 60 + "\n", "#333333")
-        if on_finished:
-            on_finished(False)
-        return
-
-    def _run():
-        python_exe = _trova_python()
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONIOENCODING"] = "utf-8"
-
-        bootstrap = (
-            "import runpy, sys; "
-            "from pathlib import Path; "
-            "script = sys.argv[1]; "
-            "sys.argv = sys.argv[1:]; "
-            "sys.path.insert(0, str(Path(script).resolve().parent)); "
-            "runpy.run_path(script, run_name='__main__')"
-        )
-
-        try:
-            process = subprocess.Popen(
-                [python_exe, "-u", "-c", bootstrap, str(script_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                env=env, cwd=str(script_path.parent),
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            for riga in process.stdout:
-                riga_pulita = rimuovi_ansi(riga.rstrip("\n").rstrip("\r"))
-                if riga_pulita.strip():
-                    terminale.write_safe(riga_pulita + "\n", colore_riga(riga_pulita))
-            process.wait()
-            if process.returncode == 0:
-                terminale.write_safe("\n✅ Completato con successo.\n", C_LOG_OK)
-                terminale.write_safe("─" * 60 + "\n", "#333333")
-                if on_finished: on_finished(True)
-            else:
-                terminale.write_safe(f"\n❌ Script terminato con errore (exit {process.returncode}).\n", C_LOG_ERR)
-                terminale.write_safe("─" * 60 + "\n", "#333333")
-                if on_finished: on_finished(False)
-
-        except FileNotFoundError:
-            terminale.write_safe(f"❌ Python runtime non trovato: {python_exe}\n", C_LOG_ERR)
-            if on_finished: on_finished(False)
-        except Exception as ex:
-            import traceback
-            terminale.write_safe(f"\n❌ Eccezione: {ex}\n", C_LOG_ERR)
-            terminale.write_safe(traceback.format_exc() + "\n", C_LOG_ERR)
-            if on_finished: on_finished(False)
-
-    threading.Thread(target=_run, daemon=True).start()
+    """Compatibility entrypoint shared by all launchers."""
+    service = getattr(terminale, "execution_service", None)
+    if service is None:
+        service = ExecutionService(terminale, _trova_python)
+        terminale.execution_service = service
+        service.started.connect(lambda activity: global_signals.script_avviato.emit())
+        service.finished.connect(lambda result: global_signals.script_terminato.emit())
+    return service.launch_path(nome_script, on_finished)
 
 
-# ─────────────────────────────────────────────────────────────
-# SCRIPT CARD
-# ─────────────────────────────────────────────────────────────
 CARD_HEIGHT        = 274
 CARD_HEIGHT_STATUS = 274
 
@@ -1672,6 +1618,7 @@ class WorkspaceSidebar(QFrame):
             ("consumer", "Consumer", "consumer"),
             ("campaigns", "Campagne", "campaigns"),
             ("files", "File", "files"),
+            ("today", "Storico", "history"),
         ):
             button = WorkspaceNavButton(icon, text, page, callback)
             self.buttons[page] = button
@@ -1690,7 +1637,7 @@ class WorkspaceSidebar(QFrame):
         exit_button.setIcon(line_icon("exit"))
         exit_button.setCursor(Qt.PointingHandCursor)
         exit_button.setMinimumHeight(38)
-        exit_button.clicked.connect(QApplication.quit)
+        exit_button.clicked.connect(lambda: self.window().close())
         layout.addWidget(exit_button)
 
     def select(self, page):
@@ -2610,7 +2557,7 @@ class ActivityDetailPanel(QFrame):
     @Slot()
     def _script_started(self):
         self.busy = True
-        self.running_activity = self.activity
+        self.running_activity = getattr(getattr(self.window(), "execution", None), "current", self.activity)
         self.refresh()
 
     @Slot()
@@ -2695,9 +2642,7 @@ class ActivityDetailPanel(QFrame):
             self.add_files_requested.emit()
             self.refresh()
             return
-        global_signals.script_avviato.emit()
-        lancia_script(activity.script, activity.terminal,
-                      lambda success: global_signals.script_terminato.emit())
+        lancia_script(activity.script, activity.terminal)
 
 
 class ModernHubPage(QWidget):
@@ -2877,6 +2822,10 @@ class OperationsWindow(QMainWindow):
         self.header = WorkspaceHeader()
         self.terminal = TerminaleWidget()
         self.activities = self._build_activities()
+        self.execution = ExecutionService(self.terminal, lambda: _trova_python(), self.activities, parent=self)
+        self.terminal.execution_service = self.execution
+        self.execution.started.connect(lambda activity: global_signals.script_avviato.emit())
+        self.execution.finished.connect(lambda result: global_signals.script_terminato.emit())
         self.favorites = Favorites([a.activity_id for a in self.activities], parent=self)
         self.hub = ModernHubPage(self.activities, header=self.header, favorites=self.favorites)
         if self.favorites.warning:
@@ -2887,6 +2836,14 @@ class OperationsWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.addWidget(self.hub)
         self.pages.addWidget(self.files_page)
+        self.history_page = HistoryPage(self.execution.history, self.activities)
+        self.pages.addWidget(self.history_page)
+        self.execution.finished.connect(self.history_page.refresh)
+        self.terminal.btn_stop = QPushButton("Interrompi")
+        self.terminal.btn_stop.setEnabled(False)
+        self.terminal.layout().itemAt(0).widget().layout().insertWidget(3, self.terminal.btn_stop)
+        self.terminal.btn_stop.clicked.connect(self.execution.cancel)
+        self.execution.changed.connect(lambda: self.terminal.btn_stop.setEnabled(self.execution.busy))
         self.splitter = QSplitter(Qt.Vertical)
         self.pages.setMinimumHeight(280)
         self.splitter.setChildrenCollapsible(False)
@@ -2901,6 +2858,17 @@ class OperationsWindow(QMainWindow):
         root.addWidget(workspace, 1)
         self.show_page("today")
         self.showMaximized()
+
+    def closeEvent(self, event):
+        if self.execution.busy:
+            answer = QMessageBox.question(self, "Attività in corso",
+                "Interrompere l'attività e chiudere al termine dell'arresto?")
+            event.ignore()
+            if answer == QMessageBox.Yes:
+                self.execution.finished.connect(lambda result: QTimer.singleShot(0, self.close))
+                self.execution.cancel()
+            return
+        super().closeEvent(event)
 
     def _build_activities(self):
         p = self.paths
@@ -2950,6 +2918,10 @@ class OperationsWindow(QMainWindow):
 
     def show_page(self, name):
         self.sidebar.select(name)
+        if name == "history":
+            self.pages.setCurrentWidget(self.history_page)
+            self.history_page.refresh()
+            return
         if name == "files":
             self.pages.setCurrentWidget(self.files_page)
             self.header.set_page("Archivio", "File", "Input e cartella di lavoro.")
