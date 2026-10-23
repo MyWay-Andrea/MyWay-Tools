@@ -3,6 +3,7 @@
 _runtime/
 dist/
 build/
+.scripts_sync_tmp/
 
 # Output
 *.exe
@@ -10,9 +11,43 @@ build/
 # Cache Python
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
 
-# Config locali (solo se davvero locali)
+# Configurazioni locali e credenziali
 .env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.p8
+*.kdbx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+credentials*
+credential*
+secret*
+secrets*
+token*
+tokens*
+
+# File locali / editor
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+.venv/
+venv/
+env/
+node_modules/
 
 #config
 *.json

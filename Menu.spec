@@ -1,35 +1,24 @@
 import os
+import sys
+from pathlib import Path
+
+spec_dir = Path(SPEC).resolve().parent
+if str(spec_dir) not in sys.path:
+    sys.path.insert(0, str(spec_dir))
+
+from build_guard import build_script_datas, print_inventory
 
 runtime_path = r'C:\TEMP\_runtime'
 site_packages = os.path.join(runtime_path, 'Lib', 'site-packages')
 
 block_cipher = None
 
-# Includi soltanto i progetti richiamati da menu.py e le relative dipendenze
-# condivise. In questo modo file locali come scripts/.env, cache e vecchi
-# progetti non possono finire accidentalmente nell'installer.
-script_datas = [
-    ('scripts/config_env.py', 'scripts'),
-    ('scripts/graph_sharepoint.py', 'scripts'),
-    ('scripts/BUSINESS/common', 'scripts/BUSINESS/common'),
-    ('scripts/BUSINESS/config', 'scripts/BUSINESS/config'),
-    ('scripts/BUSINESS/02_(OLD)_APPUNTAMENTI_SETTIMANA', 'scripts/BUSINESS/02_(OLD)_APPUNTAMENTI_SETTIMANA'),
-    ('scripts/BUSINESS/09_ESTRAZIONE_ORDINI_API', 'scripts/BUSINESS/09_ESTRAZIONE_ORDINI_API'),
-    ('scripts/BUSINESS/10_ESTRAZIONE_OPP_API', 'scripts/BUSINESS/10_ESTRAZIONE_OPP_API'),
-    ('scripts/BUSINESS/11_ESTRAZIONE_APP_API', 'scripts/BUSINESS/11_ESTRAZIONE_APP_API'),
-    ('scripts/BUSINESS/12_FCST_BUSINESS', 'scripts/BUSINESS/12_FCST_BUSINESS'),
-    ('scripts/BUSINESS/13_ESTRAI_FILE_GARA', 'scripts/BUSINESS/13_ESTRAI_FILE_GARA'),
-    ('scripts/BUSINESS/14_ELABORA_CB', 'scripts/BUSINESS/14_ELABORA_CB'),
-    ('scripts/BUSINESS/CAMPAGNE', 'scripts/BUSINESS/CAMPAGNE'),
-    ('scripts/CONSUMER/common', 'scripts/CONSUMER/common'),
-    ('scripts/CONSUMER/config', 'scripts/CONSUMER/config'),
-    ('scripts/CONSUMER/01_FORMATTA_PEDONALITA', 'scripts/CONSUMER/01_FORMATTA_PEDONALITA'),
-    ('scripts/CONSUMER/02_REPORT_PEDONALITA', 'scripts/CONSUMER/02_REPORT_PEDONALITA'),
-    ('scripts/CONSUMER/03_FORMATTA_MAGAZZINO', 'scripts/CONSUMER/03_FORMATTA_MAGAZZINO'),
-    ('scripts/CONSUMER/11_CRUSCOTTO_AGGREGATIVO', 'scripts/CONSUMER/11_CRUSCOTTO_AGGREGATIVO'),
-    ('scripts/CONSUMER/12_CRUSCOTTO_PISTA_CONSUMER', 'scripts/CONSUMER/12_CRUSCOTTO_PISTA_CONSUMER'),
-    ('scripts/CONSUMER/13_REPORT_GIACENZE', 'scripts/CONSUMER/13_REPORT_GIACENZE'),
-]
+# Il controllo elenca le risorse selezionate e gli eventuali file locali
+# esclusi. build_script_datas aggiunge i file singolarmente, quindi PyInstaller
+# non puo' ricopiare ricorsivamente .env, credenziali o cache.
+scripts_root = spec_dir / 'scripts'
+print_inventory(scripts_root)
+script_datas = build_script_datas(scripts_root)
 
 a = Analysis(
     ['menu.py'],
