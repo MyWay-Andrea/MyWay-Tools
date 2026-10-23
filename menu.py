@@ -1591,7 +1591,8 @@ class WorkspaceNavButton(QPushButton):
         super().__init__(text, parent)
         self.page = page
         role(self, "navigation")
-        self.setIcon(line_icon(icon))
+        self.setProperty("page", page)
+        self.setIcon(line_icon(icon, "#396A9B" if page == "workflows" else Theme.MUTED))
         self.setIconSize(QSize(20, 20))
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)

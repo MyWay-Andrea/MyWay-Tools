@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGridLayout, QFrame, QScrollArea,
 )
 from ui_theme import role, activity_icon, Theme
+from ui_widgets import StyledComboBox as QComboBox
 
 OUTCOMES = {"completato": "Completato", "errore": "Errore", "interrotto": "Interrotto",
             "in_esecuzione": "In esecuzione"}
@@ -86,7 +87,7 @@ class HistoryPage(QWidget):
         self.activity_filter = QComboBox()
         self.activity_filter.addItem("Tutte le attività", None)
         for activity in activities:
-            self.activity_filter.addItem(activity.title, activity.activity_id)
+            self.activity_filter.addItem(activity_icon(activity.activity_id), activity.title, activity.activity_id)
         self.outcome_filter = QComboBox()
         self.outcome_filter.addItem("Tutti gli esiti", None)
         for key, label in OUTCOMES.items():

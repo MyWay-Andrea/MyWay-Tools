@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 from ui_theme import role, activity_icon
+from ui_widgets import StyledComboBox as QComboBox
 from operations_views import AsyncQuery, display_date, OUTCOMES
 from workflow_service import validate_workflow
 
