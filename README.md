@@ -18,6 +18,52 @@ Contiene:
 * terminale integrato per mostrare l'output;
 * avvio del controllo aggiornamenti tramite `updater.py`.
 
+### Interfaccia desktop
+
+L'entrypoint usa `OperationsWindow`: sidebar, elenco ricercabile e dettaglio
+integrato sono realizzati con PySide6/Qt Widgets. `ActivitySpec` mantiene le
+attività reali e i relativi requisiti; `ModernHubPage` gestisce filtri e selezione.
+Il tema QSS, le dimensioni e le icone disegnate con QPainter sono in `ui_theme.py`;
+`ui_widgets.py` contiene il componente per i percorsi lunghi con tooltip.
+I due moduli sono importati direttamente e vengono rilevati da PyInstaller,
+senza nuove dipendenze o risorse esterne da aggiungere a `Menu.spec`.
+
+Il dettaglio prepara i file tramite il gestore RAW esistente. La verifica CB
+riutilizza lo stesso controllo SharePoint, ora condiviso con il dialogo precedente
+tramite `SharePointCheck`; i risultati arrivano sul thread Qt. Una verifica positiva
+abilita l'avvio esplicito. `MainWindow` e le altre classi precedenti sono conservate.
+
+Il terminale conserva i log durante la navigazione. La barra rimane visibile quando
+è nascosto; **Mostra/Nascondi** e il divisore consentono di espanderlo e ridimensionarlo.
+Ogni avvio lo riapre. Il blocco dei pulsanti persiste durante timer, ricerca e cambio
+sezione: questa correzione UI evita il precedente riarmo involontario durante
+un'elaborazione. Il motore subprocess, i percorsi operativi e le configurazioni
+restano invariati.
+
+Test di regressione UI (richiedono PySide6, senza eseguire script aziendali):
+
+```powershell
+python -B -m unittest discover -s tests -v
+# Controllo aggiuntivo del layout con scaling Qt:
+$env:QT_SCALE_FACTOR = '1.5'
+python -B -m unittest discover -s tests -v -k resize
+```
+
+I test usano cartelle temporanee, risposte SharePoint simulate e subprocess innocui.
+Coprono anche l'entrypoint e il richiamo dell'updater con il download disattivato.
+`MYWAY_UI_SCREENSHOTS` permette di salvare schermate nelle dimensioni 1280×800,
+1600×900, 1920×1080 e 1024×640. Il rendering offscreen e `QT_SCALE_FACTOR` non
+sostituiscono una prova su monitor Windows con DPI diversi, né un collaudo
+dell'installer o delle credenziali SharePoint reali.
+
+Nel collaudo del 23 ottobre 2026 i 10 test sono passati anche con il runtime
+di distribuzione (`C:\TEMP\_runtime`, Python 3.14.3 / PySide6 6.11.1).
+Restano due avvisi del codice/configurazione preesistenti, fuori dall'intervento UI:
+il motore subprocess può emettere `ResourceWarning` per lo stream stdout non
+chiuso esplicitamente; PyInstaller segnala la voce `site-packages` in `pathex`
+di `Menu.spec` come deprecata in vista della versione 7. Il primo avviso non
+ha impedito i test; il secondo non ha impedito la build con il runtime previsto.
+
 ### `updater.py`
 
 Gestisce l'aggiornamento automatico dell'applicazione.

@@ -10,16 +10,19 @@ import threading
 import subprocess
 from pathlib import Path
 from datetime import datetime
+from dataclasses import dataclass
 from updater import get_asset
+from ui_theme import Theme, WORKSPACE_QSS, TERMINAL_QSS, role, set_tone, line_icon
+from ui_widgets import ElidedLabel
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QScrollArea, QTextEdit,
     QSizePolicy, QStackedWidget, QGridLayout, QSpacerItem, QSplitter,
     QFileDialog, QMessageBox, QSplashScreen, QDialog,
-    QDialogButtonBox, QLineEdit
+    QDialogButtonBox, QLineEdit, QButtonGroup, QScroller
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSize, QRect
 from PySide6.QtGui import (
     QColor, QTextCharFormat, QTextCursor,
     QIcon, QPixmap, QPainter, QFont, QLinearGradient, QBrush
@@ -423,68 +426,55 @@ class TerminaleWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._collapsed = False
-        self.setMinimumHeight(32)
-        self.setStyleSheet(f"background:{C_LOG_BG}; border:none;")
+        self._expanded_height = 210
+        self.setObjectName("terminal")
+        self.setMinimumHeight(Theme.TERMINAL_HEADER)
+        self.setStyleSheet(TERMINAL_QSS)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         header = QFrame()
-        header.setFixedHeight(32)
-        header.setStyleSheet("background:#222222; border:none;")
+        header.setObjectName("terminalHeader")
+        header.setFixedHeight(Theme.TERMINAL_HEADER)
         h_lay = QHBoxLayout(header)
-        h_lay.setContentsMargins(8, 0, 8, 0)
-
-        lbl = QLabel("  ◉  TERMINALE")
-        lbl.setStyleSheet(f"color:{C_LOG_OK}; font-family:Courier; font-size:12px; font-weight:bold; background:transparent;")
-        h_lay.addWidget(lbl)
+        h_lay.setContentsMargins(16, 0, 12, 0)
+        h_lay.addWidget(QLabel("Terminale"))
+        self.state = QLabel("Pronto")
+        h_lay.addWidget(self.state)
         h_lay.addStretch()
 
-        btn_toggle = QPushButton("Nascondi")
-        btn_toggle.setFixedSize(76, 22)
-        btn_toggle.setStyleSheet("""
-            QPushButton { background:#333333; color:#B8BDC7; border:none;
-                          border-radius:4px; font-size:11px; }
-            QPushButton:hover { background:#444444; color:white; }
-        """)
-        btn_toggle.clicked.connect(lambda: self._toggle(btn_toggle))
-        h_lay.addWidget(btn_toggle)
-
-        btn_pulisci = QPushButton("Pulisci")
-        btn_pulisci.setFixedSize(70, 22)
-        btn_pulisci.setStyleSheet("""
-            QPushButton { background:#333333; color:#888888; border:none;
-                          border-radius:4px; font-size:11px; }
-            QPushButton:hover { background:#444444; }
-        """)
-        btn_pulisci.clicked.connect(self.pulisci)
-        h_lay.addWidget(btn_pulisci)
+        self.btn_clear = QPushButton("Pulisci")
+        self.btn_clear.clicked.connect(self.pulisci)
+        h_lay.addWidget(self.btn_clear)
+        self.btn_toggle = QPushButton("Nascondi")
+        self.btn_toggle.clicked.connect(self._toggle)
+        h_lay.addWidget(self.btn_toggle)
         layout.addWidget(header)
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setStyleSheet(f"""
-            QTextEdit {{
-                background:{C_LOG_BG}; color:{C_LOG_TEXT};
-                font-family:Courier; font-size:13px;
-                border:none; padding:4px 8px;
-            }}
-        """)
+        self.log.setAccessibleName("Log operativi")
         layout.addWidget(self.log)
 
-        self.signals = LogSignals()
+        self.signals = LogSignals(self)
         self.signals.append.connect(self._append_colored)
+        global_signals.script_avviato.connect(self.script_started)
+        global_signals.script_terminato.connect(self.script_finished)
         self._write("Pronto. Avvia uno script per vedere l'output qui.\n", C_LOG_INFO)
 
+    @Slot(str, str)
     def _append_colored(self, testo, colore):
-        cursor = self.log.textCursor()
+        scrollbar = self.log.verticalScrollBar()
+        follow = scrollbar.value() >= scrollbar.maximum() - 4
+        cursor = QTextCursor(self.log.document())
         cursor.movePosition(QTextCursor.End)
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(colore))
         cursor.insertText(testo, fmt)
-        self.log.setTextCursor(cursor)
-        self.log.ensureCursorVisible()
+        if follow:
+            scrollbar.setValue(scrollbar.maximum())
 
     def _write(self, testo, colore):
         self._append_colored(testo, colore)
@@ -495,15 +485,31 @@ class TerminaleWidget(QFrame):
     def pulisci(self):
         self.log.clear()
 
-    def _toggle(self, button):
-        self._collapsed = not self._collapsed
-        self.log.setVisible(not self._collapsed)
+    @Slot()
+    def script_started(self):
+        self.state.setText("In esecuzione")
+        self.set_collapsed(False)
+
+    @Slot()
+    def script_finished(self):
+        self.state.setText("Pronto")
+
+    def _toggle(self, checked=False):
+        self.set_collapsed(not self._collapsed)
+
+    def set_collapsed(self, collapsed):
         splitter = self.parentWidget()
+        if collapsed and not self._collapsed and isinstance(splitter, QSplitter):
+            self._expanded_height = max(140, splitter.sizes()[-1])
+        self._collapsed = collapsed
+        self.log.setVisible(not collapsed)
+        self.setMinimumHeight(Theme.TERMINAL_HEADER if collapsed else 140)
+        self.setMaximumHeight(Theme.TERMINAL_HEADER if collapsed else 16777215)
+        self.btn_toggle.setText("Mostra" if collapsed else "Nascondi")
         if isinstance(splitter, QSplitter):
-            total = max(sum(splitter.sizes()), 400)
-            terminal_height = 32 if self._collapsed else 190
-            splitter.setSizes([max(1, total - terminal_height), terminal_height])
-        button.setText("Mostra" if self._collapsed else "Nascondi")
+            total = max(sum(splitter.sizes()), splitter.height() - splitter.handleWidth())
+            height = Theme.TERMINAL_HEADER if collapsed else min(self._expanded_height, max(140, total // 2))
+            splitter.setSizes([max(1, total - height), height])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -792,7 +798,7 @@ class RawFilesWidget(QFrame):
         super().__init__(parent)
         self.cartella = Path(cartella)
         self.on_folder_changed = on_folder_changed
-        self.setStyleSheet(f"RawFilesWidget {{ background:{C_PANEL}; border-radius:14px; border:1px solid {C_BORDER}; }}")
+        self.setObjectName("rawFiles")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMinimumHeight(190)
 
@@ -801,60 +807,49 @@ class RawFilesWidget(QFrame):
         outer.setSpacing(11)
 
         header_row = QHBoxLayout()
-        icona = QLabel("📁")
-        icona.setStyleSheet(f"font-size:27px; color:{C_RED}; background:transparent; border:none;")
+        icona = QLabel()
+        icona.setPixmap(line_icon("files").pixmap(QSize(24, 24)))
         header_row.addWidget(icona)
-        lbl_titolo = QLabel("Raw Files")
-        lbl_titolo.setStyleSheet(f"font-size:17px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
+        lbl_titolo = role(QLabel("File RAW"), "section")
         header_row.addWidget(lbl_titolo)
         header_row.addStretch()
         self.lbl_count = QLabel("0 file")
-        self.lbl_count.setStyleSheet(f"background:{C_RED}; color:white; border-radius:10px; font-size:12px; font-weight:bold; padding:2px 10px; border:none;")
+        self.lbl_count.setObjectName("fileCount")
         header_row.addWidget(self.lbl_count)
         btn_cartella = QPushButton("Cambia cartella")
         btn_cartella.setCursor(Qt.PointingHandCursor)
-        btn_cartella.setStyleSheet(f"""
-            QPushButton {{ background:{C_FASTWEB}; color:#111827; border:none; border-radius:7px;
-                           font-size:13px; font-weight:bold; padding:6px 14px; }}
-            QPushButton:hover {{ background:{C_FASTWEB_HOVER}; }}
-        """)
         btn_cartella.clicked.connect(self._scegli_cartella)
         header_row.addWidget(btn_cartella)
-        btn_carica = QPushButton("+ Carica file")
-        btn_carica.setStyleSheet(f"""
-            QPushButton {{ background:{C_RED}; color:white; border:none; border-radius:7px; font-size:13px; font-weight:bold; padding:6px 14px; }}
-            QPushButton:hover {{ background:{C_RED_HOVER}; }}
-        """)
+        btn_carica = role(QPushButton("Carica file"), "primary")
         btn_carica.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         btn_carica.clicked.connect(self._carica_file)
         header_row.addWidget(btn_carica)
         outer.addLayout(header_row)
 
-        self.lbl_percorso = QLabel()
+        self.lbl_percorso = role(ElidedLabel(), "secondary")
         self.lbl_percorso.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.lbl_percorso.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:11px; padding:0 2px;")
         self.lbl_percorso.setToolTip(str(self.cartella))
         outer.addWidget(self.lbl_percorso)
 
-        sep = QFrame()
+        sep = role(QFrame(), "separator")
         sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background:{C_BORDER}; border:none;")
         outer.addWidget(sep)
 
         self.lista_frame = QFrame()
-        self.lista_frame.setStyleSheet("background:transparent; border:none;")
         self.lista_layout = QVBoxLayout(self.lista_frame)
         self.lista_layout.setContentsMargins(0, 0, 0, 0)
         self.lista_layout.setSpacing(4)
         outer.addWidget(self.lista_frame)
 
-        self.lbl_vuoto = QLabel("Nessun file presente. Carica i file raw da processare.")
-        self.lbl_vuoto.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:13px; background:transparent; border:none; padding:12px 0;")
+        self.lbl_vuoto = role(QLabel("Nessun file presente. Carica i file RAW da processare."), "secondary")
+        self.lbl_vuoto.setWordWrap(True)
+        self.lbl_vuoto.setContentsMargins(0, 12, 0, 12)
         self.lbl_vuoto.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.lbl_vuoto)
 
-        hint = QLabel("Trascina i file qui oppure usa il pulsante  →  Carica file")
-        hint.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:12px; background:transparent; border:1.5px dashed {C_BORDER}; border-radius:8px; padding:10px;")
+        hint = QLabel("Trascina qui i file oppure usa il pulsante Carica file")
+        hint.setObjectName("dropHint")
+        hint.setWordWrap(True)
         hint.setAlignment(Qt.AlignCenter)
         outer.addWidget(hint)
 
@@ -878,15 +873,21 @@ class RawFilesWidget(QFrame):
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
-            self.setStyleSheet(f"RawFilesWidget {{ background:#FFF8F8; border-radius:14px; border:2px solid {C_RED}; }}")
+            self._set_drag_over(True)
 
     def dragLeaveEvent(self, e):
-        self.setStyleSheet(f"RawFilesWidget {{ background:{C_PANEL}; border-radius:14px; border:1px solid {C_BORDER}; }}")
+        self._set_drag_over(False)
 
     def dropEvent(self, e):
-        self.setStyleSheet(f"RawFilesWidget {{ background:{C_PANEL}; border-radius:14px; border:1px solid {C_BORDER}; }}")
+        self._set_drag_over(False)
         if e.mimeData().hasUrls():
             self._copia_files([Path(u.toLocalFile()) for u in e.mimeData().urls()])
+
+    def _set_drag_over(self, active):
+        self.setProperty("dragOver", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
     def _leggi_files(self):
         if not self.cartella.exists(): return []
@@ -900,6 +901,8 @@ class RawFilesWidget(QFrame):
         files = self._leggi_files()
         self.lbl_percorso.setText(f"Cartella attiva:  {self.cartella}")
         self.lbl_count.setText(f"{len(files)} file" if len(files) != 1 else "1 file")
+        self.lbl_vuoto.setVisible(len(files) == 0)
+        self.lista_frame.setVisible(len(files) > 0)
         nomi_attuali = {
             self.lista_layout.itemAt(i).widget().property("nome_file")
             for i in range(self.lista_layout.count())
@@ -918,30 +921,28 @@ class RawFilesWidget(QFrame):
         riga = QFrame()
         riga.setProperty("nome_file", fpath.name)
         riga.setFixedHeight(42)
-        riga.setStyleSheet(f"QFrame {{ background:#FAFAFA; border-radius:8px; border:1px solid {C_BORDER}; }} QFrame:hover {{ background:{C_RED_LIGHT}; border:1px solid {C_RED}; }}")
+        riga.setObjectName("fileRow")
         lay = QHBoxLayout(riga)
         lay.setContentsMargins(10, 0, 10, 0)
         lay.setSpacing(10)
-        ext = fpath.suffix.lower()
-        ico = "📊" if ext in (".xlsx", ".xls") else "📋" if ext == ".csv" else "📄"
-        lbl_ico = QLabel(ico)
-        lbl_ico.setStyleSheet("font-size:16px; background:transparent; border:none;")
+        lbl_ico = QLabel()
+        lbl_ico.setPixmap(line_icon("document").pixmap(QSize(18, 18)))
         lbl_ico.setFixedWidth(22)
         lay.addWidget(lbl_ico)
-        lbl_nome = QLabel(fpath.name)
-        lbl_nome.setStyleSheet(f"font-size:13px; font-weight:bold; color:{C_TEXT_DARK}; background:transparent; border:none;")
-        lbl_nome.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        lbl_nome = ElidedLabel(fpath.name)
         lay.addWidget(lbl_nome)
         try:    size_str = formatta_dimensione(fpath.stat().st_size)
         except: size_str = "—"
-        lbl_size = QLabel(size_str)
-        lbl_size.setStyleSheet(f"font-size:12px; color:{C_TEXT_LIGHT}; background:transparent; border:none;")
+        lbl_size = role(QLabel(size_str), "secondary")
         lbl_size.setFixedWidth(60)
         lbl_size.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         lay.addWidget(lbl_size)
-        btn_del = QPushButton("❌")
-        btn_del.setFixedSize(24, 24)
-        btn_del.setStyleSheet(f"QPushButton {{ background:transparent; color:{C_TEXT_LIGHT}; border:1px solid {C_BORDER}; border-radius:5px; font-size:12px; }} QPushButton:hover {{ background:#FFECEC; color:{C_RED}; border:1px solid {C_RED}; }}")
+        btn_del = QPushButton()
+        btn_del.setIcon(line_icon("trash"))
+        btn_del.setFixedSize(32, 32)
+        btn_del.setProperty("role", "iconButton")
+        btn_del.setToolTip(f"Elimina {fpath.name}")
+        btn_del.setAccessibleName(f"Elimina {fpath.name}")
         btn_del.clicked.connect(lambda checked=False, p=fpath: self._elimina_file(p))
         lay.addWidget(btn_del)
         return riga
@@ -1620,120 +1621,109 @@ class MainWindow(QMainWindow):
 # ─────────────────────────────────────────────────────────────
 class WorkspaceNavButton(QPushButton):
     def __init__(self, icon, text, page, callback, parent=None):
-        super().__init__(f"{icon}   {text}", parent)
+        super().__init__(text, parent)
         self.page = page
+        role(self, "navigation")
+        self.setIcon(line_icon(icon))
+        self.setIconSize(QSize(20, 20))
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(46)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background:transparent; color:#CBD1DB; border:none;
-                border-radius:9px; padding:0 16px; text-align:left;
-                font-size:15px; font-weight:bold;
-            }}
-            QPushButton:hover {{ background:#202C3D; color:white; }}
-            QPushButton:checked {{ background:{C_FASTWEB}; color:#111827; }}
-        """)
+        self.setMinimumHeight(42)
         self.clicked.connect(lambda checked=False: callback(page))
 
 
 class WorkspaceSidebar(QFrame):
     def __init__(self, callback, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(250)
-        self.setStyleSheet(f"background:{C_SIDEBAR}; border:none;")
+        self.setObjectName("workspaceSidebar")
+        self.setFixedWidth(Theme.SIDEBAR_WIDTH)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 0, 16, 18)
+        layout.setContentsMargins(16, 24, 16, 18)
         layout.setSpacing(6)
 
         brand = QFrame()
         brand_layout = QHBoxLayout(brand)
-        brand_layout.setContentsMargins(8, 24, 8, 24)
-        if ICON_PATH.exists():
-            icon = QLabel()
-            icon.setPixmap(QPixmap(str(ICON_PATH)).scaled(
-                34, 34, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            brand_layout.addWidget(icon)
+        brand_layout.setContentsMargins(8, 0, 0, 24)
+        brand_layout.setSpacing(12)
+        icon = QLabel()
+        icon.setPixmap(carica_icona().pixmap(QSize(36, 36)))
+        brand_layout.addWidget(icon)
         title_box = QVBoxLayout()
-        title = QLabel("MYWAY")
-        title.setStyleSheet("color:white; font-size:18px; font-weight:bold;")
-        subtitle = QLabel("OPERATIONS HUB")
-        subtitle.setStyleSheet(f"color:{C_FASTWEB}; font-size:10px; font-weight:bold;")
+        title_box.setSpacing(3)
+        title = role(QLabel("MyWay Tools"), "section")
+        subtitle = role(QLabel("Spazio operativo"), "secondary")
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         brand_layout.addLayout(title_box)
         brand_layout.addStretch()
         layout.addWidget(brand)
 
-        label = QLabel("  AREA DI LAVORO")
-        label.setStyleSheet("color:#778295; font-size:10px; font-weight:bold; padding:8px 0;")
+        label = role(QLabel("  WORKSPACE"), "eyebrow")
         layout.addWidget(label)
+        layout.addSpacing(6)
 
         self.buttons = {}
+        self.group = QButtonGroup(self)
         for icon, text, page in (
-            ("⌂", "Panoramica", "dashboard"),
-            ("▶", "Giornalieri", "operations"),
-            ("◆", "Campagne", "campaigns"),
-            ("✦", "Utilità", "tools"),
+            ("today", "Oggi", "today"),
+            ("all", "Tutte le attività", "all"),
+            ("business", "Business", "business"),
+            ("consumer", "Consumer", "consumer"),
+            ("campaigns", "Campagne", "campaigns"),
+            ("files", "File", "files"),
         ):
             button = WorkspaceNavButton(icon, text, page, callback)
             self.buttons[page] = button
+            self.group.addButton(button)
             layout.addWidget(button)
 
         layout.addStretch()
-        line = QFrame()
+        line = role(QFrame(), "separator")
         line.setFixedHeight(1)
-        line.setStyleSheet("background:#293548;")
         layout.addWidget(line)
-        info = QLabel("FASTWEB + VODAFONE\nAutomazioni operative")
-        info.setStyleSheet("color:#8E98A8; font-size:11px; padding:10px 8px;")
+        layout.addSpacing(8)
+        info = role(QLabel("FASTWEB + VODAFONE\nAutomazioni operative"), "secondary")
+        info.setContentsMargins(8, 4, 0, 10)
         layout.addWidget(info)
-        exit_button = QPushButton("Esci")
+        exit_button = role(QPushButton("Esci"), "navigation")
+        exit_button.setIcon(line_icon("exit"))
         exit_button.setCursor(Qt.PointingHandCursor)
-        exit_button.setFixedHeight(38)
-        exit_button.setStyleSheet("""
-            QPushButton { color:#CBD1DB; background:transparent; border:none;
-                          border-radius:8px; text-align:left; padding-left:10px; font-size:13px; }
-            QPushButton:hover { color:white; background:#202C3D; }
-        """)
+        exit_button.setMinimumHeight(38)
         exit_button.clicked.connect(QApplication.quit)
         layout.addWidget(exit_button)
 
     def select(self, page):
-        for name, button in self.buttons.items():
-            button.setChecked(name == page)
+        if page in self.buttons:
+            self.buttons[page].setChecked(True)
 
 
 class WorkspaceHeader(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(92)
-        self.setStyleSheet(f"background:{C_PANEL}; border:none;")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(32, 14, 32, 12)
-        text = QVBoxLayout()
-        text.setSpacing(2)
-        self.eyebrow = QLabel("PANORAMICA")
-        self.eyebrow.setStyleSheet(f"color:{C_RED}; font-size:10px; font-weight:bold;")
-        self.title = QLabel("Centro operativo")
-        self.title.setStyleSheet(f"color:{C_TEXT_DARK}; font-size:27px; font-weight:bold;")
-        self.subtitle = QLabel("Tutto ciò che serve, senza passaggi superflui.")
-        self.subtitle.setStyleSheet(f"color:{C_TEXT_LIGHT}; font-size:13px;")
-        text.addWidget(self.eyebrow)
-        text.addWidget(self.title)
-        text.addWidget(self.subtitle)
-        layout.addLayout(text)
-        layout.addStretch()
-        self.clock = QLabel()
-        self.clock.setStyleSheet(f"color:{C_TEXT_MID}; font-size:13px; font-weight:bold;")
-        layout.addWidget(self.clock)
+        self.setObjectName("workspaceHeader")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(8)
+        top = QHBoxLayout()
+        self.eyebrow = role(QLabel("WORKSPACE"), "eyebrow")
+        top.addWidget(self.eyebrow)
+        top.addStretch()
+        self.clock = role(QLabel(), "secondary")
+        top.addWidget(self.clock)
+        layout.addLayout(top)
+        self.title = role(QLabel("Oggi"), "title")
+        self.title.setWordWrap(True)
+        self.subtitle = role(QLabel(), "secondary")
+        self.subtitle.setWordWrap(True)
+        layout.addWidget(self.title)
+        layout.addWidget(self.subtitle)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_clock)
         self.timer.start(30000)
         self.update_clock()
 
     def update_clock(self):
-        self.clock.setText(datetime.now().strftime("%d %b %Y  ·  %H:%M"))
+        self.clock.setText(datetime.now().strftime("%d.%m.%Y"))
 
     def set_page(self, eyebrow, title, subtitle):
         self.eyebrow.setText(eyebrow.upper())
@@ -1846,6 +1836,66 @@ class WorkflowRow(QFrame):
         if not self.running:
             self.run_button.setText("Avvia" if self.available else "Non disponibile")
             self.refresh_status()
+
+
+class SharePointCheck(QObject):
+    """The existing remote preflight, shared by the inline panel and legacy dialog."""
+
+    finished = Signal(bool, str)
+    _result_ready = Signal(bool, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.running = False
+        self._result_ready.connect(self._completed, Qt.QueuedConnection)
+
+    @Slot(bool, str)
+    def _completed(self, ready, message):
+        self.running = False
+        self.finished.emit(ready, message)
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+
+        def check_cb():
+            marker = "__MYWAY_CB_CHECK__"
+            bootstrap = r'''import json, sys
+from pathlib import Path
+scripts = Path(sys.argv[1])
+module = scripts / "BUSINESS" / "14_ELABORA_CB"
+sys.path[:0] = [str(module), str(scripts)]
+from cb_sharepoint import PATH_RAW_CB_REMOTO, _drive, _file_dati
+client, drive_id = _drive()
+files = [item for item in client.elenca_file_cartella(drive_id, PATH_RAW_CB_REMOTO) if _file_dati(item)]
+matches = [item for item in files if "cb" in str(item.get("name", "")).casefold()]
+matches.sort(key=lambda item: str(item.get("lastModifiedDateTime", "")), reverse=True)
+print("__MYWAY_CB_CHECK__" + json.dumps({"found": bool(matches), "name": str(matches[0].get("name", "")) if matches else ""}))'''
+            try:
+                completed = subprocess.run(
+                    [_trova_python(), "-u", "-c", bootstrap, str(SCRIPTS_DIR)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=40, creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                payload_line = next(
+                    (line for line in reversed(completed.stdout.splitlines()) if line.startswith(marker)),
+                    None,
+                )
+                if completed.returncode != 0 or not payload_line:
+                    raise RuntimeError("Controllo SharePoint non completato")
+                payload = json.loads(payload_line[len(marker):])
+                if payload.get("found"):
+                    result = (True, f"File CB trovato su SharePoint: {payload.get('name')}")
+                else:
+                    result = (False, "Nessun file contenente “CB” trovato in 00_DA_ELABORARE.")
+            except subprocess.TimeoutExpired:
+                result = (False, "Verifica SharePoint interrotta dopo 40 secondi. Riprova.")
+            except Exception:
+                result = (False, "Impossibile verificare SharePoint. Controlla la connessione e riprova.")
+            self._result_ready.emit(*result)
+
+        threading.Thread(target=check_cb, daemon=True).start()
 
 
 class ScriptLaunchDialog(QDialog):
@@ -1962,6 +2012,8 @@ class ScriptLaunchDialog(QDialog):
         if tile.remote_check:
             self.remote_check_signals = RemoteCheckSignals(self)
             self.remote_check_signals.finished.connect(self._remote_check_finished)
+            self._remote_checker = SharePointCheck(self)
+            self._remote_checker.finished.connect(self.remote_check_signals.finished.emit)
             QTimer.singleShot(0, self._start_remote_check)
 
     def _start_remote_check(self):
@@ -1974,43 +2026,7 @@ class ScriptLaunchDialog(QDialog):
         if self.remote_check_button:
             self.remote_check_button.hide()
 
-        def check_cb():
-            marker = "__MYWAY_CB_CHECK__"
-            bootstrap = r'''import json, sys
-from pathlib import Path
-scripts = Path(sys.argv[1])
-module = scripts / "BUSINESS" / "14_ELABORA_CB"
-sys.path[:0] = [str(module), str(scripts)]
-from cb_sharepoint import PATH_RAW_CB_REMOTO, _drive, _file_dati
-client, drive_id = _drive()
-files = [item for item in client.elenca_file_cartella(drive_id, PATH_RAW_CB_REMOTO) if _file_dati(item)]
-matches = [item for item in files if "cb" in str(item.get("name", "")).casefold()]
-matches.sort(key=lambda item: str(item.get("lastModifiedDateTime", "")), reverse=True)
-print("__MYWAY_CB_CHECK__" + json.dumps({"found": bool(matches), "name": str(matches[0].get("name", "")) if matches else ""}))'''
-            try:
-                completed = subprocess.run(
-                    [_trova_python(), "-u", "-c", bootstrap, str(SCRIPTS_DIR)],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=40, creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                payload_line = next(
-                    (line for line in reversed(completed.stdout.splitlines()) if line.startswith(marker)),
-                    None,
-                )
-                if completed.returncode != 0 or not payload_line:
-                    raise RuntimeError("Controllo SharePoint non completato")
-                payload = json.loads(payload_line[len(marker):])
-                if payload.get("found"):
-                    result = (True, f"File CB trovato su SharePoint: {payload.get('name')}")
-                else:
-                    result = (False, "Nessun file contenente “CB” trovato in 00_DA_ELABORARE.")
-            except subprocess.TimeoutExpired:
-                result = (False, "Verifica SharePoint interrotta dopo 40 secondi. Riprova.")
-            except Exception:
-                result = (False, "Impossibile verificare SharePoint. Controlla la connessione e riprova.")
-            self.remote_check_signals.finished.emit(*result)
-
-        threading.Thread(target=check_cb, daemon=True).start()
+        self._remote_checker.start()
 
     def _remote_check_finished(self, ready, message):
         self._remote_check_running = False
@@ -2353,18 +2369,464 @@ class DashboardPage(QWidget):
         outer.addWidget(scroll)
 
 
+@dataclass
+class ActivitySpec:
+    number: int
+    title: str
+    description: str
+    category: str
+    script: Path | None
+    terminal: TerminaleWidget
+    folder: Path | None = None
+    filename: str | None = None
+    instructions: str = ""
+    remote_check: str | None = None
+    expected_count: int = 1
+
+    @property
+    def available(self):
+        return bool(self.script and self.script.is_file())
+
+    def readiness(self):
+        if not self.available:
+            return False, "Funzione non ancora disponibile."
+        if self.folder and self.filename:
+            matches = [f for f in self.folder.glob(self.filename) if f.is_file()]
+            count = len(matches)
+            if self.expected_count > 1:
+                if count == self.expected_count:
+                    return True, f"Tutti i file richiesti sono presenti: {count}/{self.expected_count}."
+                if count < self.expected_count:
+                    return False, f"File presenti: {count}/{self.expected_count}. Ne mancano {self.expected_count - count}."
+                return False, f"File presenti: {count}/{self.expected_count}. Rimuovi i file in eccesso."
+            if matches:
+                return True, f"File trovato: {matches[0].name}"
+            return False, f"File richiesto non trovato: {self.filename}"
+        return True, "Tutto pronto per l'esecuzione."
+
+    def refresh_status(self):
+        pass
+
+
+class ActivityListButton(QPushButton):
+    """Compact, keyboard-accessible row; Qt paints hover, selection and focus."""
+
+    def __init__(self, activity, callback, parent=None):
+        super().__init__(parent)
+        self.activity = activity
+        self.state_text = ""
+        self.state_color = Theme.MUTED
+        role(self, "activity")
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(Theme.ROW_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumWidth(0)
+        self.row_icon = line_icon({"Business": "business", "Consumer": "consumer",
+                                   "Campagne": "campaigns"}[activity.category])
+        self.clicked.connect(lambda checked=False: callback(activity))
+        self.refresh_text()
+
+    def sizeHint(self):
+        return QSize(320, Theme.ROW_HEIGHT)
+
+    def minimumSizeHint(self):
+        return QSize(180, Theme.ROW_HEIGHT)
+
+    def refresh_text(self, running=False):
+        ready, message = self.activity.readiness()
+        if running:
+            state, color = "In esecuzione", Theme.INFO
+        elif not self.activity.available:
+            state, color = "Non disponibile", Theme.MUTED
+        elif self.activity.remote_check:
+            state, color = "Verifica SharePoint", Theme.INFO
+        elif ready:
+            state, color = "Pronto", Theme.SUCCESS
+        else:
+            state, color = "File da preparare", Theme.WARNING
+        self.state_text, self.state_color = state, color
+        self.setAccessibleName(f"{self.activity.title}. {self.activity.description}. {state}")
+        self.setToolTip(f"{self.activity.title}\n{self.activity.description}\n{state}\n{message}")
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        self.row_icon.paint(painter, QRect(12, 25, 24, 24))
+        left, width = 48, max(1, self.width() - 62)
+        for text, y, size, weight, color in (
+            (self.activity.title, 8, 14, QFont.DemiBold, Theme.TEXT),
+            (self.activity.description, 29, 12, QFont.Normal, Theme.MUTED),
+            (self.state_text, 49, 11, QFont.Normal, self.state_color),
+        ):
+            font = QFont(Theme.FONT)
+            font.setPixelSize(size)
+            font.setWeight(weight)
+            painter.setFont(font)
+            painter.setPen(QColor(color))
+            painter.drawText(QRect(left, y, width, 20), Qt.AlignLeft | Qt.AlignVCenter,
+                             painter.fontMetrics().elidedText(text, Qt.ElideRight, width))
+        if not self.isChecked():
+            painter.setPen(QColor(Theme.BORDER))
+            painter.drawLine(left, self.height() - 1, self.width() - 12, self.height() - 1)
+
+
+class ActivityDetailPanel(QFrame):
+    files_requested = Signal()
+    add_files_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.activity = None
+        self.busy = False
+        self.running_activity = None
+        self._remote_activity = None
+        self._remote_results = {}
+        self.remote_checker = SharePointCheck(self)
+        self.remote_checker.finished.connect(self._remote_finished)
+        self.setObjectName("detailPanel")
+        self.setMinimumWidth(330)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName("detailBody")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(Theme.PAD, 30, Theme.PAD, Theme.PAD)
+        layout.setSpacing(16)
+        self.category = role(QLabel("DETTAGLI ATTIVITÀ"), "eyebrow")
+        self.title = role(QLabel("Seleziona un'attività"), "title")
+        self.title.setWordWrap(True)
+        self.description = role(QLabel("Scegli una voce dall'elenco."), "body")
+        self.description.setWordWrap(True)
+        layout.addWidget(self.category)
+        layout.addWidget(self.title)
+        layout.addWidget(self.description)
+        divider = role(QFrame(), "separator")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        self.instructions_title = role(QLabel("Prima di iniziare"), "section")
+        self.instructions = role(QLabel(), "body")
+        self.instructions.setWordWrap(True)
+        layout.addWidget(self.instructions_title)
+        layout.addWidget(self.instructions)
+        layout.addSpacing(4)
+        layout.addWidget(role(QLabel("Disponibilità"), "section"))
+        self.status = role(QLabel("Nessuna attività selezionata."), "status")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.requirements = role(QLabel(), "secondary")
+        self.requirements.setWordWrap(True)
+        layout.addWidget(self.requirements)
+        self.folder = role(ElidedLabel(), "secondary")
+        self.folder.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.folder)
+        self.files_button = QPushButton("Gestisci file")
+        self.files_button.setIcon(line_icon("files"))
+        self.files_button.clicked.connect(self.files_requested.emit)
+        layout.addWidget(self.files_button, alignment=Qt.AlignLeft)
+        self.remote_check_button = QPushButton("Ripeti verifica SharePoint")
+        self.remote_check_button.clicked.connect(self._check_remote)
+        layout.addWidget(self.remote_check_button, alignment=Qt.AlignLeft)
+        layout.addStretch()
+        self.scroll.setWidget(body)
+        root.addWidget(self.scroll, 1)
+        footer = QFrame()
+        footer.setObjectName("detailFooter")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(Theme.PAD, 16, Theme.PAD, 20)
+        footer_layout.setSpacing(8)
+        self.action = role(QPushButton("Seleziona un'attività"), "primary")
+        self.action.setCursor(Qt.PointingHandCursor)
+        self.action.setMinimumHeight(40)
+        self.action.setMinimumWidth(200)
+        self.action.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.action.setEnabled(False)
+        self.action.clicked.connect(self.run_or_prepare)
+        footer_layout.addWidget(self.action, alignment=Qt.AlignLeft)
+        hint = role(QLabel("L'avanzamento viene mostrato nel terminale."), "secondary")
+        hint.setWordWrap(True)
+        footer_layout.addWidget(hint)
+        root.addWidget(footer)
+        global_signals.script_avviato.connect(self._script_started)
+        global_signals.script_terminato.connect(self._script_finished)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(3000)
+        self.set_activity(None)
+
+    def set_activity(self, activity):
+        changed = self.activity is not activity
+        self.activity = activity
+        if changed and activity:
+            # A new selection always requires a fresh remote preflight.
+            self._remote_results.pop(activity.number, None)
+        self.category.setText(activity.category.upper() if activity else "DETTAGLI ATTIVITÀ")
+        self.title.setText(activity.title if activity else "Nessun risultato")
+        self.description.setText(activity.description if activity else "Prova con un'altra ricerca o scegli una sezione.")
+        self.instructions.setText(
+            (activity.instructions or "Nessun passaggio preliminare richiesto.") if activity else "")
+        self.instructions_title.setVisible(activity is not None)
+        self.instructions.setVisible(activity is not None)
+        self.refresh()
+        if changed:
+            self.scroll.verticalScrollBar().setValue(0)
+
+    @Slot()
+    def _script_started(self):
+        self.busy = True
+        self.running_activity = self.activity
+        self.refresh()
+
+    @Slot()
+    def _script_finished(self):
+        self.busy = False
+        self.running_activity = None
+        self._remote_results.clear()
+        self.refresh()
+
+    def refresh(self):
+        activity = self.activity
+        self.files_button.setVisible(bool(activity and activity.folder))
+        self.folder.setVisible(bool(activity and activity.folder))
+        self.requirements.setVisible(bool(activity and activity.filename))
+        self.remote_check_button.setVisible(bool(activity and activity.remote_check))
+        if not activity:
+            self.status.setText("Nessuna attività selezionata.")
+            set_tone(self.status, "muted")
+            self.action.setText("Seleziona un'attività")
+            self.action.setEnabled(False)
+            self.folder.clear()
+            self.requirements.clear()
+            return
+        ready, message = activity.readiness()
+        checking = self.remote_checker.running and self._remote_activity is activity
+        if activity.remote_check and activity.available:
+            ready, message = self._remote_results.get(
+                activity.number, (False, "Verifica la presenza del file CB su SharePoint prima di avviare."))
+            if checking:
+                ready, message = False, "Verifica della cartella SharePoint in corso…"
+        if self.busy:
+            message = f"In esecuzione: {self.running_activity.title if self.running_activity else 'attività'}. Attendi il completamento."
+        self.status.setText(message)
+        set_tone(self.status, "info" if self.busy or checking else
+                 "ready" if ready else "warning" if activity.available else "muted")
+        self.folder.setText(str(activity.folder) if activity.folder else "")
+        self.requirements.setText(
+            f"File richiesti: {activity.filename}\nQuantità attesa: {activity.expected_count}"
+            if activity.filename else "")
+        # Keep the lock across timer refreshes, searches and navigation.
+        self.action.setEnabled(activity.available and not self.busy and not checking)
+        self.remote_check_button.setEnabled(activity.available and not self.busy and not self.remote_checker.running)
+        if self.busy:
+            self.action.setText("Esecuzione in corso")
+        elif not activity.available:
+            self.action.setText("Non disponibile")
+        elif checking:
+            self.action.setText("Verifica in corso…")
+        elif activity.remote_check and not ready:
+            self.action.setText("Verifica SharePoint")
+            self.action.setEnabled(not self.remote_checker.running)
+        elif ready:
+            self.action.setText("Esegui attività")
+        else:
+            self.action.setText("Aggiungi file richiesti")
+
+    def _check_remote(self):
+        if self.busy or not self.activity or not self.activity.available or self.remote_checker.running:
+            return
+        self._remote_activity = self.activity
+        self._remote_results.pop(self.activity.number, None)
+        self.remote_checker.start()
+        self.refresh()
+
+    @Slot(bool, str)
+    def _remote_finished(self, ready, message):
+        if self._remote_activity:
+            self._remote_results[self._remote_activity.number] = ready, message
+        self.refresh()
+
+    def run_or_prepare(self):
+        activity = self.activity
+        if self.busy or not activity or not activity.available:
+            return
+        ready, _ = activity.readiness()
+        if activity.remote_check:
+            ready, _ = self._remote_results.get(activity.number, (False, ""))
+            if not ready:
+                self._check_remote()
+                return
+        if not ready:
+            self.add_files_requested.emit()
+            self.refresh()
+            return
+        global_signals.script_avviato.emit()
+        lancia_script(activity.script, activity.terminal,
+                      lambda success: global_signals.script_terminato.emit())
+
+
+class ModernHubPage(QWidget):
+    def __init__(self, activities, parent=None, header=None):
+        super().__init__(parent)
+        self.activities = activities
+        self.current_filter = "today"
+        self.buttons = []
+        self.setObjectName("hub")
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(1)
+        list_panel = QFrame()
+        list_panel.setObjectName("listPanel")
+        list_panel.setMinimumWidth(340)
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(Theme.PAD, Theme.PAD, 18, 16)
+        list_layout.setSpacing(Theme.GAP)
+        self.header = header or WorkspaceHeader()
+        list_layout.addWidget(self.header)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Cerca attività")
+        self.search.setAccessibleName("Cerca attività nella sezione")
+        self.search.setClearButtonEnabled(True)
+        self.search.setMinimumHeight(38)
+        self.search.addAction(line_icon("search"), QLineEdit.LeadingPosition)
+        self.search.textChanged.connect(self.rebuild)
+        list_layout.addWidget(self.search)
+        self.count_label = role(QLabel(), "secondary")
+        list_layout.addWidget(self.count_label)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Native wheel scrolling plus touch scrolling without intercepting mouse clicks.
+        QScroller.grabGesture(self.scroll.viewport(), QScroller.TouchGesture)
+        self.list_body = QWidget()
+        self.list_body.setObjectName("listBody")
+        self.list_box = QVBoxLayout(self.list_body)
+        self.list_box.setContentsMargins(0, 0, 0, 4)
+        self.list_box.setSpacing(2)
+        self.scroll.setWidget(self.list_body)
+        list_layout.addWidget(self.scroll, 1)
+        self.splitter.addWidget(list_panel)
+        self.detail = ActivityDetailPanel()
+        self.splitter.addWidget(self.detail)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([520, 520])
+        root.addWidget(self.splitter)
+        self.group = QButtonGroup(self)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh_rows)
+        self.timer.start(3000)
+        global_signals.script_avviato.connect(self.refresh_rows)
+        global_signals.script_terminato.connect(self.refresh_rows)
+        self.rebuild()
+
+    def set_filter(self, name):
+        self.current_filter = name
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self.rebuild()
+
+    def visible_activities(self):
+        query = self.search.text().strip().casefold()
+        items = self.activities
+        if self.current_filter == "today":
+            items = [a for a in items if a.number <= 7]
+        elif self.current_filter in ("business", "consumer", "campaigns"):
+            category = "Campagne" if self.current_filter == "campaigns" else self.current_filter.title()
+            items = [a for a in items if a.category == category]
+        if query:
+            items = [a for a in items if query in f"{a.title} {a.description} {a.category}".casefold()]
+        return items
+
+    def rebuild(self):
+        selected = self.detail.activity
+        position = self.scroll.verticalScrollBar().value()
+        while self.list_box.count():
+            item = self.list_box.takeAt(0)
+            if item.widget():
+                if isinstance(item.widget(), QPushButton):
+                    self.group.removeButton(item.widget())
+                item.widget().hide()
+                item.widget().deleteLater()
+        self.buttons = []
+        items = self.visible_activities()
+        self.count_label.setText(f"{len(items)} attività")
+        for activity in items:
+            button = ActivityListButton(activity, self.select_activity)
+            self.buttons.append(button)
+            self.group.addButton(button)
+            self.list_box.addWidget(button)
+        if not items:
+            empty = role(QLabel("Nessuna attività trovata.\nProva un altro termine di ricerca."), "secondary")
+            empty.setWordWrap(True)
+            empty.setContentsMargins(12, 24, 12, 24)
+            self.list_box.addWidget(empty)
+        self.list_box.addStretch()
+        kept_selection = any(activity is selected for activity in items)
+        self.select_activity(selected if kept_selection else items[0] if items else None)
+        self.scroll.verticalScrollBar().setValue(position if kept_selection else 0)
+        self.refresh_rows()
+
+    @Slot()
+    def refresh_rows(self):
+        for button in self.buttons:
+            button.refresh_text(button.activity is self.detail.running_activity)
+
+    def select_activity(self, activity):
+        for button in self.buttons:
+            button.setChecked(button.activity is activity)
+            if button.activity is activity and button.hasFocus():
+                self.scroll.ensureWidgetVisible(button, 0, 8)
+        self.detail.set_activity(activity)
+
+
+class FilesPage(QWidget):
+    def __init__(self, paths, callback, parent=None):
+        super().__init__(parent)
+        self.setObjectName("filesPage")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(Theme.PAD, Theme.PAD, Theme.PAD, Theme.PAD)
+        layout.setSpacing(Theme.GAP)
+        layout.addWidget(role(QLabel("ARCHIVIO"), "eyebrow"))
+        layout.addWidget(role(QLabel("File operativi"), "title"))
+        subtitle = role(QLabel("Controlla, aggiungi o rimuovi i file usati dalle elaborazioni."), "body")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName("fileBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 8, 0, 0)
+        self.raw_files_widget = RawFilesWidget(paths["RAW_FILES"], on_folder_changed=callback)
+        body_layout.addWidget(self.raw_files_widget)
+        body_layout.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll, 1)
+
+
 class OperationsWindow(QMainWindow):
     def __init__(self, sharepoint_root, raw_files_path=None):
         super().__init__()
         self.sharepoint_root = Path(sharepoint_root)
-        self.paths = _build_paths(
-            self.sharepoint_root, Path(raw_files_path) if raw_files_path else None)
+        self.paths = _build_paths(self.sharepoint_root, Path(raw_files_path) if raw_files_path else None)
         os.environ["BASE_DIR"] = str(self.sharepoint_root)
         os.environ["MYWAY_SHAREPOINT_ROOT"] = str(self.sharepoint_root)
-        self.setWindowTitle("MyWay Operations Hub")
-        self.setMinimumSize(1040, 680)
-        self.resize(1360, 860)
+        self.setWindowTitle("MyWay Tools")
+        self.setMinimumSize(1024, 640)
+        self.resize(1400, 880)
         self.setWindowIcon(carica_icona())
+        self.setStyleSheet(WORKSPACE_QSS)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -2373,122 +2835,93 @@ class OperationsWindow(QMainWindow):
         root.setSpacing(0)
         self.sidebar = WorkspaceSidebar(self.show_page)
         root.addWidget(self.sidebar)
-
         workspace = QWidget()
-        workspace.setStyleSheet(f"background:{C_BG};")
+        workspace.setObjectName("workspace")
         workspace_layout = QVBoxLayout(workspace)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
         self.header = WorkspaceHeader()
-        workspace_layout.addWidget(self.header)
         self.terminal = TerminaleWidget()
+        self.activities = self._build_activities()
+        self.hub = ModernHubPage(self.activities, header=self.header)
+        self.files_page = FilesPage(self.paths, self.set_raw_folder)
+        self.hub.detail.files_requested.connect(lambda: self.show_page("files"))
+        self.hub.detail.add_files_requested.connect(self.files_page.raw_files_widget._carica_file)
         self.pages = QStackedWidget()
-        self.pages.setStyleSheet(f"background:{C_BG};")
-        self.page_map = {}
-        self._build_pages()
-
+        self.pages.addWidget(self.hub)
+        self.pages.addWidget(self.files_page)
         self.splitter = QSplitter(Qt.Vertical)
+        self.pages.setMinimumHeight(280)
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.setHandleWidth(5)
-        self.splitter.setStyleSheet(f"QSplitter::handle {{ background:#DCE1E8; }} QSplitter::handle:hover {{ background:{C_FASTWEB}; }}")
+        self.splitter.setHandleWidth(4)
         self.splitter.addWidget(self.pages)
         self.splitter.addWidget(self.terminal)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
-        self.splitter.setSizes([670, 190])
-        workspace_layout.addWidget(self.splitter, stretch=1)
-        root.addWidget(workspace, stretch=1)
-        self.show_page("dashboard")
+        self.splitter.setSizes([650, 210])
+        self.terminal.set_collapsed(True)
+        workspace_layout.addWidget(self.splitter, 1)
+        root.addWidget(workspace, 1)
+        self.show_page("today")
         self.showMaximized()
 
-    def _build_pages(self):
+    def _build_activities(self):
         p = self.paths
-        operations = [
-            ("Business", [
-                ("Estrai file gara", "Estrae, formatta e pubblica gara, opportunità e appuntamenti.", p["ESTRAI_FILE_GARA"]),
-                ("Forecast Business", "Genera il forecast giornaliero e la reportistica associata.", p["FCST"]),
-                ("Appuntamenti settimanali", "Prepara il report settimanale per ciascun venditore.", p["APPUNTAMENTI_SETTIMANA"]),
-                ("Elabora CB", "Analizza consistenze, anagrafiche e produce il report CB.",
-                 p["ELABORA_CB"], None, None,
-                 "Una volta ricevuto il file della nuova CB, controlla la corretta assegnazione "
-                 "dei venditori e inserisci il file nella cartella 00_SCAMBIO_DOCUMENTI > "
-                 "00_BUSINESS > CB > 00_DA_ELABORARE. Lo script è quindi pronto per essere lanciato.",
-                 "sharepoint_cb"),
-            ]),
-            ("Consumer", [
-                ("Formatta pedonalità", "Prepara il file pedonalità per le elaborazioni.",
-                 p["FORMATTA_PEDONALITA"], p["RAW_FILES"], "Giorgio Mandelli*.xlsx",
-                 "Accedi al portale Vodafone dedicato e richiedi la mail con il link per scaricare "
-                 "il file relativo alla pedonalità. Una volta ricevuta la mail, scarica il file e "
-                 "inseriscilo all'interno della cartella RAW_FILE."),
-                ("Cruscotto tracciamento", "Aggrega Business, Energia e Gadget per il monitoraggio negozi.", p["CRUSCOTTO_TRACCIAMENTO"]),
-                ("Cruscotto giornaliero", "Riunisce le piste Consumer nel report operativo quotidiano.",
-                 p["CRUSCOTTO_GIORNALIERO"], p["RAW_FILES"], "*AVANZAMENTI*.xls*",
-                 "Accedi a StoreSales e apri ANALISI > Avanzamenti Vendite. Scarica i file "
-                 "1.1, 1.2, 1.3, 2 e 3 selezionando PEZZI, quindi aggiungi _PEZZI alla fine "
-                 "del nome di ciascun file. Ripeti la stessa procedura selezionando PUNTI e "
-                 "aggiungi _PUNTI alla fine del nome di ciascun file. Una volta completato, "
-                 "inserisci tutti e 10 i file nella cartella RAW_FILE.",
-                 None, 10),
-                ("Giacenze smartphone", "Genera il report aggiornato delle giacenze smartphone.",
-                 p["REPORT_GIACENZE_SMARTPHONE"], p["RAW_FILES"], "*GIACENZE_ARTICOLI*.xls*",
-                 "Accedi a StoreSales e apri MAGAZZINO > Giacenze Articoli. "
-                 "Nel filtro CATEGORIE seleziona TELEFONIA > SMARTPHONE; nel campo VISUALIZZA "
-                 "seleziona «solo in giacenza». Apri il report e scarica il file XLS."),
-            ]),
+        rows = [
+            ("Estrai file gara", "Estrae, formatta e pubblica gara, opportunità e appuntamenti.", "Business", p["ESTRAI_FILE_GARA"]),
+            ("Forecast Business", "Genera il forecast giornaliero e la reportistica associata.", "Business", p["FCST"]),
+            ("Appuntamenti settimanali", "Prepara il report settimanale per ciascun venditore.", "Business", p["APPUNTAMENTI_SETTIMANA"]),
+            ("Elabora CB", "Analizza consistenze, anagrafiche e produce il report CB.", "Business", p["ELABORA_CB"], None, None, "Inserisci la nuova CB in 00_SCAMBIO_DOCUMENTI > 00_BUSINESS > CB > 00_DA_ELABORARE.", "sharepoint_cb"),
+            ("Formatta pedonalità", "Prepara il file pedonalità per le elaborazioni.", "Consumer", p["FORMATTA_PEDONALITA"], p["RAW_FILES"], "Giorgio Mandelli*.xlsx", "Scarica il file dal portale Vodafone e inseriscilo nella cartella RAW_FILE."),
+            ("Cruscotto tracciamento", "Aggrega Business, Energia e Gadget per il monitoraggio negozi.", "Consumer", p["CRUSCOTTO_TRACCIAMENTO"]),
+            ("Cruscotto giornaliero", "Riunisce le piste Consumer nel report operativo quotidiano.", "Consumer", p["CRUSCOTTO_GIORNALIERO"], p["RAW_FILES"], "*AVANZAMENTI*.xls*", "Scarica da StoreSales i cinque report PEZZI e i cinque report PUNTI, rinominali e inseriscili nella cartella RAW_FILE.", None, 10),
+            ("Giacenze smartphone", "Genera il report aggiornato delle giacenze smartphone.", "Consumer", p["REPORT_GIACENZE_SMARTPHONE"], p["RAW_FILES"], "*GIACENZE_ARTICOLI*.xls*", "Scarica da StoreSales il report Giacenze Articoli filtrato su TELEFONIA > SMARTPHONE."),
+            ("Divisione per agente", "Divide i file campagna e li assegna ai venditori.", "Campagne", p["DIVIDI_FILE_CAMPAGNE"]),
+            ("Riaggrega file", "Ricompone i file lavorati dai venditori.", "Campagne", p["AGGREGA_FILE_VENDITORI"]),
+            ("Presa in carico", "Controlla le lavorazioni e assegna i clienti al CRM.", "Campagne", p["PRESA_IN_CARICO"]),
+            ("Report campagne", "Statistiche, KPI ed esiti delle campagne.", "Campagne", p["REPORT_CAMPAGNE"]),
+            ("Formatta gara", "Elabora lo storico gara estratto dal CRM.", "Business", p["FORMATTA_GARA"]),
+            ("Formatta appuntamenti", "Prepara il file appuntamenti estratto dal CRM.", "Business", p["FORMATTA_APPUNTAMENTI"]),
+            ("Formatta opportunità", "Prepara il file opportunità estratto dal CRM.", "Business", p["FORMATTA_OPPORTUNITA"]),
+            ("Chiusura gara", "Estrae gli ordini attivati nella gara precedente.", "Business", p["CHIUSURA_GARA"]),
+            ("Report pedonalità", "Crea il report di analisi dei flussi nei punti vendita.", "Consumer", p["REPORT_PEDONALITA"]),
+            ("Formatta magazzino", "Classifica e prepara il file valore del magazzino.", "Consumer", p["FORMATTA_MAGAZZINO"], p["RAW_FILES"], "VALORE_DEL_MAGAZZINO*.csv"),
         ]
-        campaigns = [("Campagne", [
-            ("Divisione per agente", "Divide i file campagna e li assegna ai venditori.", p["DIVIDI_FILE_CAMPAGNE"]),
-            ("Riaggrega file", "Ricompone i file lavorati dai venditori.", p["AGGREGA_FILE_VENDITORI"]),
-            ("Presa in carico", "Controlla le lavorazioni e assegna i clienti al CRM.", p["PRESA_IN_CARICO"]),
-            ("Report campagne", "Statistiche, KPI ed esiti delle campagne.", p["REPORT_CAMPAGNE"]),
-        ])]
-        tools = [
-            ("Business", [
-                ("Formatta gara", "Elabora lo storico gara estratto dal CRM.", p["FORMATTA_GARA"]),
-                ("Formatta appuntamenti", "Prepara il file appuntamenti estratto dal CRM.", p["FORMATTA_APPUNTAMENTI"]),
-                ("Formatta opportunità", "Prepara il file opportunità estratto dal CRM.", p["FORMATTA_OPPORTUNITA"]),
-                ("Chiusura gara", "Estrae gli ordini attivati nella gara precedente.", p["CHIUSURA_GARA"]),
-            ]),
-            ("Consumer", [
-                ("Report pedonalità", "Crea il report di analisi dei flussi nei punti vendita.", p["REPORT_PEDONALITA"]),
-                ("Formatta magazzino", "Classifica e prepara il file valore del magazzino.", p["FORMATTA_MAGAZZINO"], p["RAW_FILES"], "VALORE_DEL_MAGAZZINO*.csv"),
-            ]),
-        ]
-        definitions = (
-            ("dashboard", DashboardPage(self.show_page, p, self.set_raw_folder)),
-            ("operations", WorkflowPage(operations, self.terminal)),
-            ("campaigns", WorkflowPage(campaigns, self.terminal, columns=3)),
-            ("tools", WorkflowPage(tools, self.terminal)),
-        )
-        for name, page in definitions:
-            self.page_map[name] = page
-            self.pages.addWidget(page)
+        activities = []
+        for i, row in enumerate(rows, 1):
+            title, description, category, script, *options = row
+            options += [None] * (5 - len(options))
+            folder, filename, instructions, remote_check, expected_count = options[:5]
+            activities.append(ActivitySpec(
+                i, title, description, category, script, self.terminal,
+                folder, filename, instructions or "", remote_check, expected_count or 1))
+        return activities
 
     def show_page(self, name):
-        self.pages.setCurrentWidget(self.page_map[name])
         self.sidebar.select(name)
-        copy = {
-            "dashboard": ("Panoramica", "Centro operativo", "File di input e accesso immediato ai flussi."),
-            "operations": ("Esecuzione", "Giornalieri", "Le attività ricorrenti Business e Consumer."),
-            "campaigns": ("Workflow", "Campagne", "Dalla divisione dei file fino alla presa in carico."),
-            "tools": ("Supporto", "Utilità", "Formattazioni e procedure specialistiche."),
+        if name == "files":
+            self.pages.setCurrentWidget(self.files_page)
+            self.header.set_page("Archivio", "File", "Input e cartella di lavoro.")
+            return
+        self.pages.setCurrentWidget(self.hub)
+        self.hub.set_filter(name)
+        titles = {
+            "today": ("Hub", "Oggi", "Le attività operative più frequenti."),
+            "all": ("Hub", "Tutte le attività", "Cerca e avvia qualsiasi procedura."),
+            "business": ("Area", "Business", "Procedure e reportistica Business."),
+            "consumer": ("Area", "Consumer", "Procedure e reportistica Consumer."),
+            "campaigns": ("Area", "Campagne", "Gestione completa delle campagne."),
         }
-        self.header.set_page(*copy[name])
+        self.header.set_page(*titles[name])
 
     def set_raw_folder(self, folder):
-        """Aggiorna e persiste la cartella RAW usata da tutte le procedure."""
         folder = Path(folder)
         self.paths["RAW_FILES"] = folder
         salva_cartella_raw(folder, self.sharepoint_root)
-        for tile in self.findChildren(ScriptTile):
-            if tile.filename:
-                tile.folder = folder
-                tile.refresh_status()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            QApplication.quit()
+        for activity in self.activities:
+            if activity.filename:
+                activity.folder = folder
+        self.hub.rebuild()
 
 
 # ─────────────────────────────────────────────────────────────
