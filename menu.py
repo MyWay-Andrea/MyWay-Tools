@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
 from updater import get_asset
-from ui_theme import Theme, WORKSPACE_QSS, TERMINAL_QSS, role, set_tone, line_icon
+from ui_theme import Theme, WORKSPACE_QSS, TERMINAL_QSS, role, set_tone, line_icon, activity_icon
 from ui_widgets import ElidedLabel
 from operational_preferences import Favorites
 
@@ -2430,8 +2430,7 @@ class ActivityListButton(QPushButton):
         self.setFixedHeight(Theme.ROW_HEIGHT)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMinimumWidth(0)
-        self.row_icon = line_icon({"Business": "business", "Consumer": "consumer",
-                                   "Campagne": "campaigns"}[activity.category])
+        self.row_icon = activity_icon(activity.activity_id)
         self.clicked.connect(lambda checked=False: callback(activity))
         self.refresh_text()
 
@@ -2469,7 +2468,7 @@ class ActivityListButton(QPushButton):
         elif ready:
             state, color = "Pronto", Theme.SUCCESS
         else:
-            state, color = "File da preparare", Theme.WARNING
+            state, color = "File mancanti", Theme.WARNING
         self.state_text, self.state_color = state, color
         self.setAccessibleName(f"{self.activity.title}. {self.activity.description}. {state}")
         self.setToolTip(f"{self.activity.title}\n{self.activity.description}\n{state}\n{message}")
@@ -2478,8 +2477,8 @@ class ActivityListButton(QPushButton):
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
-        self.row_icon.paint(painter, QRect(12, 25, 24, 24))
-        left, width = 48, max(1, self.width() - 92)
+        self.row_icon.paint(painter, QRect(10, 21, 32, 32))
+        left, width = 52, max(1, self.width() - 96)
         for text, y, size, weight, color in (
             (self.activity.title, 8, 14, QFont.DemiBold, Theme.TEXT),
             (self.activity.description, 29, 12, QFont.Normal, Theme.MUTED),
@@ -2525,6 +2524,9 @@ class ActivityDetailPanel(QFrame):
         layout.setContentsMargins(Theme.PAD, 30, Theme.PAD, Theme.PAD)
         layout.setSpacing(16)
         self.category = role(QLabel("DETTAGLI ATTIVITÀ"), "eyebrow")
+        self.activity_image = QLabel()
+        self.activity_image.setFixedSize(44, 44)
+        layout.addWidget(self.activity_image)
         self.title = role(QLabel("Seleziona un'attività"), "title")
         self.title.setWordWrap(True)
         self.description = role(QLabel("Scegli una voce dall'elenco."), "body")
@@ -2588,6 +2590,9 @@ class ActivityDetailPanel(QFrame):
     def set_activity(self, activity):
         changed = self.activity is not activity
         self.activity = activity
+        self.activity_image.setVisible(activity is not None)
+        if activity:
+            self.activity_image.setPixmap(activity_icon(activity.activity_id).pixmap(QSize(44, 44)))
         if changed and activity:
             # A new selection always requires a fresh remote preflight.
             self._remote_results.pop(activity.number, None)

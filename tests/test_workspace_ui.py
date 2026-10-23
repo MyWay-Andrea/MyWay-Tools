@@ -258,10 +258,14 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(completed, [False, False])
 
     def test_resize_splitters_and_screenshots(self):
+        from ui_theme import ACTIVITY_ICONS, activity_icon
+        self.assertEqual(set(ACTIVITY_ICONS), {a.activity_id for a in self.window.activities})
         for scale in (1, 1.25, 1.5, 2):
             pixmap = menu.line_icon("business").pixmap(QSize(20, 20), scale)
             self.assertEqual(pixmap.width(), round(20 * scale))
             self.assertEqual(pixmap.deviceIndependentSize().width(), 20)
+            colored = activity_icon("forecast_business").pixmap(QSize(32, 32), scale)
+            self.assertEqual(colored.width(), round(32 * scale))
         output = os.environ.get("MYWAY_UI_SCREENSHOTS")
         if output:
             Path(output).mkdir(parents=True, exist_ok=True)

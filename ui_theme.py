@@ -202,6 +202,18 @@ class _LineIcon(QIconEngine):
             path.lineTo(3, 4)
             path.closeSubpath()
             painter.drawPath(path)
+        elif name in ("chart", "process"):
+            if name == "chart":
+                painter.drawLine(4, 20, 21, 20)
+                painter.drawLine(6, 16, 6, 12)
+                painter.drawLine(12, 16, 12, 8)
+                painter.drawLine(18, 16, 18, 4)
+            else:
+                painter.drawRoundedRect(QRectF(4, 3, 12, 17), 2, 2)
+                painter.drawLine(8, 8, 12, 8)
+                painter.drawLine(11, 14, 21, 14)
+                painter.drawLine(18, 11, 21, 14)
+                painter.drawLine(18, 17, 21, 14)
         elif name == "search":
             painter.drawEllipse(QRectF(4, 4, 11, 11))
             painter.drawLine(14, 14, 20, 20)
@@ -235,3 +247,47 @@ class _LineIcon(QIconEngine):
 
 def line_icon(name, color=Theme.MUTED):
     return QIcon(_LineIcon(name, color))
+
+
+# One local vector mapping for lists, detail panels, history and dashboard.
+ACTIVITY_ICONS = {
+    "estrai_file_gara": ("files", "#3B82F6"),
+    "forecast_business": ("chart", "#8B5CF6"),
+    "appuntamenti_settimanali": ("today", "#EC4899"),
+    "elabora_cb": ("process", "#F59E0B"),
+    "formatta_pedonalita": ("process", "#F59E0B"),
+    "cruscotto_tracciamento": ("all", "#10B981"),
+    "cruscotto_giornaliero": ("chart", "#EC4899"),
+    "giacenze_smartphone": ("chart", "#EC4899"),
+    "dividi_file_campagne": ("campaigns", "#06B6D4"),
+    "aggrega_file_venditori": ("campaigns", "#06B6D4"),
+    "presa_in_carico": ("campaigns", "#06B6D4"),
+    "report_campagne": ("chart", "#06B6D4"),
+    "formatta_gara": ("process", "#F59E0B"),
+    "formatta_appuntamenti": ("process", "#F59E0B"),
+    "formatta_opportunita": ("process", "#F59E0B"),
+    "chiusura_gara": ("files", "#3B82F6"),
+    "report_pedonalita": ("chart", "#EC4899"),
+    "formatta_magazzino": ("process", "#F59E0B"),
+}
+
+
+class _ActivityIcon(_LineIcon):
+    def clone(self):
+        return _ActivityIcon(self.name, self.color)
+
+    def paint(self, painter, rect, mode, state):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        color = QColor(self.color if mode != QIcon.Disabled else "#9696A0")
+        color.setAlpha(28)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRectF(rect), rect.width() * .24, rect.height() * .24)
+        inset = max(1, round(rect.width() * .16))
+        super().paint(painter, rect.adjusted(inset, inset, -inset, -inset), mode, state)
+        painter.restore()
+
+
+def activity_icon(activity_id):
+    return QIcon(_ActivityIcon(*ACTIVITY_ICONS.get(activity_id, ("files", "#64748B"))))
