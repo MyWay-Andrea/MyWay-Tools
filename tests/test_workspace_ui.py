@@ -103,6 +103,26 @@ class WorkspaceTests(unittest.TestCase):
         loaded = Favorites([a.activity_id for a in self.window.activities], self.window.favorites.path)
         self.assertEqual(loaded.ids, DEFAULT_FAVORITES)
 
+    def test_workflow_editor_and_navigation(self):
+        from workflow_views import WorkflowEditor
+        editor = WorkflowEditor(self.window.activities, parent=self.window)
+        editor.name.setText("Sequenza manuale")
+        editor.add_step({"activity_id": "estrai_file_gara"})
+        editor.add_step({"activity_id": "forecast_business"})
+        editor.steps.setCurrentRow(1)
+        editor.move(-1)
+        editor.save()
+        self.window.workflow_store.save(editor.definition)
+        self.window.workflow_page.reload()
+        self.window.show_page("workflows")
+        self.assertIs(self.window.pages.currentWidget(), self.window.workflow_page)
+        self.assertTrue(self.window.workflow_page.start_button.isEnabled())
+        self.assertIn("Forecast", self.window.workflow_page.progress.item(0).text())
+        self.assertFalse(self.window.workflow_manager.active)
+        self.wait_until(lambda: self.window.workflow_page.query.version > 0)
+        QTest.qWait(50)
+        editor.deleteLater()
+
     def test_script_bindings_and_lock_across_refresh_and_navigation(self):
         with patch.object(menu, "lancia_script", side_effect=lambda *args: menu.global_signals.script_avviato.emit()) as launch:
             for activity in self.window.activities:

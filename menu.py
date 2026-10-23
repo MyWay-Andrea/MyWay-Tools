@@ -18,6 +18,8 @@ from operational_preferences import Favorites
 from execution_service import ExecutionService
 from operations_views import HistoryPage
 from activity_status import StatusService
+from workflow_service import WorkflowStore, WorkflowManager
+from workflow_views import WorkflowPage as ManagedWorkflowPage
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
@@ -1618,6 +1620,7 @@ class WorkspaceSidebar(QFrame):
             ("campaigns", "Campagne", "campaigns"),
             ("files", "File", "files"),
             ("today", "Storico", "history"),
+            ("play", "Workflow", "workflows"),
         ):
             button = WorkspaceNavButton(icon, text, page, callback)
             self.buttons[page] = button
@@ -2836,12 +2839,17 @@ class OperationsWindow(QMainWindow):
         self.pages.addWidget(self.files_page)
         self.history_page = HistoryPage(self.execution.history, self.activities)
         self.pages.addWidget(self.history_page)
+        self.workflow_store = WorkflowStore([a.activity_id for a in self.activities])
+        self.workflow_manager = WorkflowManager(self.execution, self.activities, parent=self)
+        self.workflow_page = ManagedWorkflowPage(self.workflow_store, self.workflow_manager, self.activities)
+        self.pages.addWidget(self.workflow_page)
+        self.workflow_manager.changed.connect(self._execution_changed)
         self.execution.finished.connect(self.history_page.refresh)
         self.terminal.btn_stop = QPushButton("Interrompi")
         self.terminal.btn_stop.setEnabled(False)
         self.terminal.layout().itemAt(0).widget().layout().insertWidget(3, self.terminal.btn_stop)
-        self.terminal.btn_stop.clicked.connect(self.execution.cancel)
-        self.execution.changed.connect(lambda: self.terminal.btn_stop.setEnabled(self.execution.busy))
+        self.terminal.btn_stop.clicked.connect(self.stop_execution)
+        self.execution.changed.connect(self._execution_changed)
         self.splitter = QSplitter(Qt.Vertical)
         self.pages.setMinimumHeight(280)
         self.splitter.setChildrenCollapsible(False)
@@ -2858,15 +2866,33 @@ class OperationsWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        if self.execution.busy:
+        if self.execution.busy or self.workflow_manager.active:
             answer = QMessageBox.question(self, "Attività in corso",
                 "Interrompere l'attività e chiudere al termine dell'arresto?")
             event.ignore()
             if answer == QMessageBox.Yes:
-                self.execution.finished.connect(lambda result: QTimer.singleShot(0, self.close))
-                self.execution.cancel()
+                if not getattr(self, "_closing", False):
+                    self._closing = True
+                    signal = self.workflow_manager.finished if self.workflow_manager.active else self.execution.finished
+                    signal.connect(lambda result: QTimer.singleShot(0, self.close))
+                self.stop_execution()
             return
         super().closeEvent(event)
+
+    def stop_execution(self):
+        if self.workflow_manager.active:
+            self.workflow_manager.cancel()
+        else:
+            self.execution.cancel()
+
+    def _execution_changed(self):
+        busy = self.execution.busy or self.workflow_manager.active
+        self.terminal.btn_stop.setEnabled(busy)
+        self.hub.detail.busy = busy
+        self.hub.detail.running_activity = self.execution.current
+        self.hub.detail.refresh()
+        if self.workflow_manager.active:
+            self.terminal.state.setText("Workflow in corso")
 
     def _build_activities(self):
         p = self.paths
@@ -2916,6 +2942,11 @@ class OperationsWindow(QMainWindow):
 
     def show_page(self, name):
         self.sidebar.select(name)
+        if name == "workflows":
+            self.pages.setCurrentWidget(self.workflow_page)
+            self.workflow_page.refresh()
+            self.workflow_page.load_recent()
+            return
         if name == "history":
             self.pages.setCurrentWidget(self.history_page)
             self.history_page.refresh()

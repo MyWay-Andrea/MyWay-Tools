@@ -63,7 +63,7 @@ class HistoryStore:
             self.settings.update(retention_days=90, max_log_chars=64000)
         with self.connect() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version > 1:
+            if version > 2:
                 raise RuntimeError("Versione storico più recente dell'applicazione")
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS runs (
@@ -72,7 +72,11 @@ class HistoryStore:
                 outcome TEXT NOT NULL, exit_code INTEGER, log TEXT NOT NULL DEFAULT '',
                 workflow_run_id TEXT, step_index INTEGER)""")
             db.execute("CREATE INDEX IF NOT EXISTS runs_date ON runs(started_at DESC)")
-            db.execute("PRAGMA user_version=1")
+            db.execute("""CREATE TABLE IF NOT EXISTS workflow_runs (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, started_at TEXT NOT NULL,
+                ended_at TEXT, outcome TEXT NOT NULL, steps_json TEXT NOT NULL,
+                current_index INTEGER NOT NULL DEFAULT 0)""")
+            db.execute("PRAGMA user_version=2")
         self.prune()
 
     @contextmanager
@@ -93,6 +97,21 @@ class HistoryStore:
             db.execute("""UPDATE runs SET ended_at=?, duration=MAX(0,(julianday(?) - julianday(started_at))*86400),
                        outcome='interrotto', log=log || ? WHERE outcome='in_esecuzione'""",
                        (now, now, "\nSessione terminata senza esito: esecuzione interrotta, nessuna ripresa automatica.\n"))
+            db.execute("UPDATE workflow_runs SET ended_at=?,outcome='interrotto' WHERE outcome='in_esecuzione'", (now,))
+
+    def start_workflow(self, run_id, name, steps):
+        with self.connect() as db:
+            db.execute("INSERT INTO workflow_runs(id,name,started_at,outcome,steps_json) VALUES(?,?,?,?,?)",
+                       (run_id, name, utc_now(), "in_esecuzione", json.dumps(steps)))
+
+    def update_workflow(self, run_id, index, outcome="in_esecuzione"):
+        with self.connect() as db:
+            db.execute("UPDATE workflow_runs SET current_index=?,outcome=?,ended_at=? WHERE id=?",
+                       (index, outcome, None if outcome == "in_esecuzione" else utc_now(), run_id))
+
+    def workflows(self, limit=20):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM workflow_runs ORDER BY started_at DESC LIMIT ?", (limit,))]
 
     def start(self, activity, workflow_run_id=None, step_index=None):
         run_id = uuid4().hex
@@ -116,11 +135,13 @@ class HistoryStore:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings["retention_days"])).isoformat()
         with self.connect() as db:
             db.execute("DELETE FROM runs WHERE started_at < ? AND outcome != 'in_esecuzione'", (cutoff,))
+            db.execute("DELETE FROM workflow_runs WHERE started_at < ? AND outcome != 'in_esecuzione'", (cutoff,))
 
     def clear(self):
         with self.connect() as db:
             db.execute("PRAGMA secure_delete=ON")
             db.execute("DELETE FROM runs WHERE outcome != 'in_esecuzione'")
+            db.execute("DELETE FROM workflow_runs WHERE outcome != 'in_esecuzione'")
         with self.connect() as db:
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             db.execute("VACUUM")

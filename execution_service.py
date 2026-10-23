@@ -31,6 +31,7 @@ class ExecutionService(QObject):
         self._tree_lock = threading.Lock()
         self.cancelled = threading.Event()
         self._callback = None
+        self._generation = 0
         self.workflow_owner = None
         self.status_service = None
         self.profile_lock = QLockFile(str(self.history.path.with_name("execution.lock")))
@@ -55,6 +56,7 @@ class ExecutionService(QObject):
             self.terminal.write_safe("Avvio rifiutato: un'altra finestra sta eseguendo attività.\n", "#E6B86A")
             return False
         self.busy, self.current, self._callback = True, activity, callback
+        self._generation += 1
         self.cancelled.clear()
         self.started.emit(activity)
         self.changed.emit()
@@ -72,9 +74,17 @@ class ExecutionService(QObject):
         policy = LogPolicy(self.history.settings, (value for key, value in os.environ.items()
                           if re.search(r"(?i)password|passwd|token|secret|api.?key", key)))
         pending, last_flush = [], time.monotonic()
+        failure_seen = False
+        # Existing scripts can report these failures and still exit with code zero.
+        failure_patterns = {
+            "formatta_pedonalita": r"\[PEDONALITA\].*ERRORE",
+            "forecast_business": r"ATTENZIONE.*salto report",
+        }
 
         def log(text, diagnostic=False):
-            nonlocal last_flush
+            nonlocal last_flush, failure_seen
+            if not diagnostic and re.search(failure_patterns.get(activity.activity_id, r"(?!)"), text, re.I):
+                failure_seen = True
             # Original script output stays visible in the terminal, unchanged.
             self.terminal.write_safe(text, "#E0E0E0" if not diagnostic else "#8DB6DF")
             saved = policy.capture(text, diagnostic)
@@ -123,6 +133,9 @@ class ExecutionService(QObject):
                         log(re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", line))
                 code = process.wait()
                 outcome = "interrotto" if self.cancelled.is_set() else "completato" if code == 0 else "errore"
+                if outcome == "completato" and failure_seen:
+                    outcome = "errore"
+                    log("Lo script ha segnalato un errore operativo nonostante exit 0.\n", True)
                 validator = getattr(activity, "output_validator", None)
                 if outcome == "completato" and validator:
                     valid, message = validator()
@@ -175,10 +188,11 @@ class ExecutionService(QObject):
         if not self.busy:
             return
         self.cancelled.set()
+        generation = self._generation
         # Never wait on OS/process locks in the GUI thread.
         def stop():
             with self._tree_lock:
-                if self.tree:
+                if self.tree and generation == self._generation:
                     try:
                         self.tree.terminate()
                     except OSError:
